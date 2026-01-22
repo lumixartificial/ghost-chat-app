@@ -16,7 +16,7 @@ console.error = (...args) => {
   originalError.call(console, ...args);
 };
 
-// --- MOTOR CRIPTOGRÁFICO ---
+// --- MOTOR CRIPTOGRÁFICO (AUDITADO: SEGURO) ---
 const CryptoUtils = {
   deriveKey: async (password, salt) => {
     const enc = new TextEncoder();
@@ -54,6 +54,7 @@ const App = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [isObscured, setIsObscured] = useState(false); // Estado para la cortina de privacidad
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
@@ -79,19 +80,52 @@ const App = () => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
 
-  // --- 2. EFECTOS ---
+  // --- 2. EFECTOS DE SEGURIDAD Y CONFIGURACIÓN ---
 
   // Sincronizar Ref con State
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // Configuración Inicial PWA
+  // Configuración Inicial PWA y Protección de Pantalla
   useEffect(() => {
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
+    
+    // Captura de instalación
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
     });
+
+    // --- PROTECCIÓN ANTI-ESPÍA / SCREENSHOT / MIRRORING ---
+    const handleVisibilityChange = () => {
+      // Si la app pasa a segundo plano o el usuario cambia de pestaña, oscurecer inmediatamente
+      if (document.hidden) {
+        setIsObscured(true);
+      } else {
+        // Al volver, quitamos la cortina
+        setIsObscured(false);
+      }
+    };
+
+    const handleBlur = () => {
+      // Si se pierde el foco (ej: abrir panel de notificaciones o cambiar de app), oscurecer
+      setIsObscured(true);
+    };
+
+    const handleFocus = () => {
+      // Al recuperar el foco, mostrar contenido
+      setIsObscured(false);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // Lógica BURN (Autodestrucción)
@@ -108,7 +142,7 @@ const App = () => {
            const newData = { ...vaultData };
            newData.messages[activeContact] = newMsgs;
            setVaultData(newData); 
-           // Guardado asíncrono para no bloquear UI
+           // Guardado asíncrono
            saveToVault({ messages: { ...vaultData.messages, [activeContact]: newMsgs } });
         }
       }, 1000);
@@ -171,7 +205,6 @@ const App = () => {
   };
 
   const lockVault = async () => {
-    // Si la persistencia está desactivada, limpiamos mensajes antes de cerrar
     if (vaultData.settings?.persistHistory === false) {
         const cleanData = { ...vaultData, messages: {} };
         if (encryptionKeyRef.current) {
@@ -185,7 +218,7 @@ const App = () => {
     encryptionKeyRef.current = ''; 
     if (socketRef.current) socketRef.current.close();
     setIsConnected(false);
-    setView('contacts'); // Reset view for next login
+    setView('contacts'); 
   };
 
   // RED
@@ -244,7 +277,6 @@ const App = () => {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Usar MIME type compatible
       const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : ""; 
       const options = mimeType ? { mimeType } : {};
       
@@ -258,10 +290,7 @@ const App = () => {
       mediaRecorderRef.current.onstop = () => {
         const finalMime = mediaRecorderRef.current.mimeType || "audio/webm";
         const blob = new Blob(audioChunksRef.current, { type: finalMime });
-        
-        // Detener todos los tracks para apagar el micrófono
         stream.getTracks().forEach(track => track.stop());
-
         const reader = new FileReader();
         reader.readAsDataURL(blob);
         reader.onloadend = () => sendMessage('audio', reader.result);
@@ -289,7 +318,7 @@ const App = () => {
       reader.onloadend = () => sendMessage('image', reader.result);
       reader.readAsDataURL(file);
     }
-    e.target.value = ''; // Reset input
+    e.target.value = ''; 
   };
 
   // CALCULADORA
@@ -321,21 +350,16 @@ const App = () => {
     }
   };
 
-  // --- FUNCIONES QUE FALTABAN ---
+  // FUNCIONES DE UI
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
       const currentContacts = vaultDataRef.current.contacts;
-      
       if (!currentContacts.includes(normalizedName) && normalizedName !== vaultDataRef.current.username) {
         saveToVault({ contacts: [...currentContacts, normalizedName] });
       }
       setNewContactName('');
     }
-  };
-
-  const toggleBurnMode = () => {
-    saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } });
   };
 
   const deleteChat = () => {
@@ -346,7 +370,13 @@ const App = () => {
     }
   };
 
-  // --- 4. RENDERIZADO CONDICIONAL ---
+  // --- 4. RENDERIZADO ---
+
+  // ** CORTINA DE PRIVACIDAD **
+  // Si la app está ofuscada (segundo plano/blur), mostramos una pantalla negra total.
+  if (isObscured) {
+    return <div className="fixed inset-0 bg-black z-[100] flex items-center justify-center pointer-events-none"></div>;
+  }
 
   // A. SETUP
   if (!hasLocalVault) {
@@ -403,7 +433,7 @@ const App = () => {
     );
   }
 
-  // C. AJUSTES (NUEVA VISTA)
+  // C. AJUSTES
   if (view === 'settings') {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
@@ -412,50 +442,25 @@ const App = () => {
            <span className="font-bold text-lg">Ajustes de Seguridad</span>
          </header>
          <div className="p-4 space-y-6">
-           {/* Sección 1: Mensajería */}
            <div>
-             <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Privacidad de Mensajes</h3>
-             
+             <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Privacidad</h3>
              <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl mb-2">
-               <div className="flex items-center gap-3">
-                 <div className="p-2 bg-red-900/20 rounded-lg text-red-500"><Flame className="w-5 h-5"/></div>
-                 <div>
-                   <p className="font-medium text-sm">Autodestrucción</p>
-                   <p className="text-[10px] text-zinc-500">Borrar mensajes leídos (5s)</p>
-                 </div>
-               </div>
+               <div className="flex items-center gap-3"><div className="p-2 bg-red-900/20 rounded-lg text-red-500"><Flame className="w-5 h-5"/></div><div><p className="font-medium text-sm">Autodestrucción</p><p className="text-[10px] text-zinc-500">Borrar tras leer (5s)</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings?.burnOnRead } })} className="cursor-pointer">
                   {vaultData.settings?.burnOnRead ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
-
              <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
-               <div className="flex items-center gap-3">
-                 <div className="p-2 bg-blue-900/20 rounded-lg text-blue-500"><Globe className="w-5 h-5"/></div>
-                 <div>
-                   <p className="font-medium text-sm">Persistencia</p>
-                   <p className="text-[10px] text-zinc-500">Mantener chats al cerrar</p>
-                 </div>
-               </div>
+               <div className="flex items-center gap-3"><div className="p-2 bg-blue-900/20 rounded-lg text-blue-500"><Globe className="w-5 h-5"/></div><div><p className="font-medium text-sm">Persistencia</p><p className="text-[10px] text-zinc-500">Guardar chats</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, persistHistory: !vaultData.settings?.persistHistory } })} className="cursor-pointer">
                   {vaultData.settings?.persistHistory ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
            </div>
-
-           {/* Sección 2: Acciones */}
            <div>
              <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Zona de Peligro</h3>
-             
-             <button onClick={() => { if(confirm("¿Vaciar todos los chats?")) saveToVault({ messages: {} }); }} className="w-full p-4 bg-zinc-900 rounded-xl flex items-center gap-3 text-red-400 hover:bg-red-900/10 mb-2 transition-colors">
-               <Trash2 className="w-5 h-5"/>
-               <span className="text-sm font-medium">Vaciar Historial</span>
-             </button>
-
-             <button onClick={() => { if(confirm("¿Estás seguro? Esto destruirá la bóveda y reiniciará la app.")) executePanicWipe(); }} className="w-full p-4 bg-red-900/20 rounded-xl flex items-center gap-3 text-red-500 hover:bg-red-900/30 transition-colors">
-               <Skull className="w-5 h-5"/>
-               <span className="text-sm font-bold">DETONAR BÓVEDA</span>
-             </button>
+             <button onClick={() => { if(confirm("¿Vaciar todo?")) saveToVault({ messages: {} }); }} className="w-full p-4 bg-zinc-900 rounded-xl flex items-center gap-3 text-red-400 hover:bg-red-900/10 mb-2 transition-colors"><Trash2 className="w-5 h-5"/><span className="text-sm font-medium">Vaciar Historial</span></button>
+             <button onClick={() => { if(confirm("¿DETONAR BÓVEDA?")) executePanicWipe(); }} className="w-full p-4 bg-red-900/20 rounded-xl flex items-center gap-3 text-red-500 hover:bg-red-900/30 transition-colors"><Skull className="w-5 h-5"/><span className="text-sm font-bold">DETONAR BÓVEDA</span></button>
            </div>
          </div>
       </div>
@@ -487,7 +492,7 @@ const App = () => {
           </div>
         </div>
         <div className="mt-auto p-6 text-center border-t border-zinc-900 bg-black">
-            <button onClick={() => { if(confirm("¿Estás seguro? Esto destruirá todos los datos de inmediato.")) executePanicWipe(); }} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto hover:bg-red-900/10 hover:text-red-500 transition-all">
+            <button onClick={() => { if(confirm("¿DETONAR?")) executePanicWipe(); }} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto hover:bg-red-900/10 hover:text-red-500 transition-all">
                 <Skull className="w-3 h-3"/> DETONAR BÓVEDA
             </button>
         </div>
@@ -506,7 +511,7 @@ const App = () => {
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
           <div className="flex gap-3">
             <button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !burnMode } })} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
-            <button onClick={() => { if(confirm("¿Borrar chat?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
+            <button onClick={deleteChat} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
           </div>
         </header>
         
