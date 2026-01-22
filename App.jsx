@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -71,6 +71,7 @@ const App = () => {
   const [newContactName, setNewContactName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [networkLogs, setNetworkLogs] = useState([]);
+  const [showAudioToast, setShowAudioToast] = useState(false); // Estado para notificación de audio
   
   // Refs DOM/Lógica
   const socketRef = useRef(null);
@@ -244,6 +245,10 @@ const App = () => {
           isMe: true, burn: currentData.settings.burnOnRead
         };
         saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
+    } else {
+        // Notificación visual de envío de audio
+        setShowAudioToast(true);
+        setTimeout(() => setShowAudioToast(false), 3000);
     }
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -525,7 +530,7 @@ const App = () => {
     const burnMode = vaultData.settings?.burnOnRead || false;
 
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
+      <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans relative">
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
           <div className="flex gap-3">
@@ -534,6 +539,14 @@ const App = () => {
           </div>
         </header>
         
+        {/* Notificación Audio Enviado */}
+        {showAudioToast && (
+            <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 bg-zinc-800/95 border border-zinc-700 text-white px-4 py-2 rounded-full text-xs flex items-center gap-2 shadow-xl animate-bounce backdrop-blur-sm">
+                <Mic className="w-3 h-3 text-green-500" />
+                <span className="font-medium">Audio enviado (Autodestrucción activa)</span>
+            </div>
+        )}
+
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => (
             <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
