@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff
 } from 'lucide-react';
 
 // --- 0. CORRECCIÓN DE ERRORES DE CONSOLA ---
@@ -73,53 +73,61 @@ const CryptoUtils = {
 
 const App = () => {
   // --- Estados Principales ---
-  // Inicialización segura para evitar pantalla blanca por datos corruptos
   const [hasLocalVault, setHasLocalVault] = useState(() => {
-    try {
-      return !!localStorage.getItem('ghost_vault_v4');
-    } catch {
-      localStorage.clear(); // Si falla, limpiamos para revivir la app
-      return false;
-    }
+    try { return !!localStorage.getItem('ghost_vault_v4'); } catch { return false; }
   });
 
   const [isVaultLocked, setIsVaultLocked] = useState(true);
   const [view, setView] = useState('contacts'); 
   const [isLoading, setIsLoading] = useState(false);
   const [stylesLoaded, setStylesLoaded] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   
   // Seguridad & Datos
   const [calcDisplay, setCalcDisplay] = useState('0');
-  const [setupData, setSetupData] = useState({ username: '', equation: '' }); 
+  
+  // FIX: Restaurar setupData que faltaba y causaba el ReferenceError
+  const [setupData, setSetupData] = useState({ username: '', equation: '' });
+  
   const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
+  const vaultDataRef = useRef({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
+  const encryptionKeyRef = useRef('');
 
   // UI Chat
   const [activeContact, setActiveContact] = useState(null); 
   const [inputText, setInputText] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [panicCount, setPanicCount] = useState(0);
+  const [networkLogs, setNetworkLogs] = useState([]); // Restaurar logs
 
-  // Refs
+  // Refs DOM
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const panicTimeoutRef = useRef(null);
 
-  // --- 3. AUTO-REPARACIÓN VISUAL (CRÍTICO) ---
+  // Sincronizar Ref con State
   useEffect(() => {
-    // Forzar fondo negro inmediatamente
+    vaultDataRef.current = vaultData;
+  }, [vaultData]);
+
+  // --- LOGGING ---
+  const addLog = (action) => {
+    setNetworkLogs(prev => [{id: Date.now(), time: new Date().toLocaleTimeString(), action}, ...prev].slice(0, 20));
+  };
+
+  // --- 3. AUTO-REPARACIÓN VISUAL ---
+  useEffect(() => {
     document.body.style.backgroundColor = '#000000';
     document.body.style.color = '#ffffff';
     document.body.style.margin = '0';
     document.body.style.fontFamily = 'monospace';
 
-    // Verificar si Tailwind cargó, si no, inyectarlo
     const checkStyles = () => {
       const isLoaded = window.getComputedStyle(document.body).getPropertyValue('--tw-text-opacity') !== '';
       if (isLoaded) {
         setStylesLoaded(true);
       } else {
-        // Inyección de emergencia
         const script = document.createElement('script');
         script.src = "https://cdn.tailwindcss.com";
         script.onload = () => setStylesLoaded(true);
@@ -146,27 +154,30 @@ const App = () => {
   };
 
   // --- 5. GESTIÓN DE BÓVEDA ---
-  const saveToVault = async (newData, overrideEquation = null) => {
-    const keyToUse = overrideEquation || setupData.equation; 
-    if (!keyToUse) return;
+  const saveToVault = async (newData, overrideKey = null) => {
+    const key = overrideKey || encryptionKeyRef.current;
+    if (!key) return;
 
-    const updatedVault = { ...vaultData, ...newData };
-    setVaultData(updatedVault);
+    const currentData = vaultDataRef.current;
+    const updatedVault = { ...currentData, ...newData };
     
-    const encrypted = await CryptoUtils.encryptData(updatedVault, keyToUse);
+    setVaultData(updatedVault);
+    vaultDataRef.current = updatedVault;
+    
+    const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem('ghost_vault_v4', encrypted);
     setHasLocalVault(true);
   };
 
   const attemptUnlock = async () => {
     setIsLoading(true);
+    addLog("Descifrando bóveda local...");
     const stored = localStorage.getItem('ghost_vault_v4');
-    
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     
     if (decrypted) {
-      setSetupData({ ...setupData, equation: calcDisplay }); 
+      encryptionKeyRef.current = calcDisplay; 
       setVaultData(decrypted);
       setIsVaultLocked(false);
       connectToRelay(decrypted.username);
@@ -174,16 +185,16 @@ const App = () => {
       try {
         const res = String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))());
         setCalcDisplay(res);
-      } catch {
-        setCalcDisplay('Error');
-      }
+      } catch { setCalcDisplay('Error'); }
     }
   };
 
   const lockVault = () => {
     setIsVaultLocked(true);
     setCalcDisplay('0');
+    encryptionKeyRef.current = ''; 
     if (socketRef.current) socketRef.current.close();
+    setIsConnected(false);
   };
 
   // --- 6. LÓGICA DE CALCULADORA ---
@@ -205,12 +216,20 @@ const App = () => {
 
   // --- 7. RED ---
   const connectToRelay = (user) => {
+    addLog(`Conectando al nodo como ${user}...`);
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
       socketRef.current = new WebSocket(RELAY_URL);
+      
       socketRef.current.onopen = () => {
-        socketRef.current.send(JSON.stringify({ type: 'REGISTER', username: user }));
+        setIsConnected(true);
+        socketRef.current.send(JSON.stringify({ type: 'REGISTER', username: user.toLowerCase() }));
+        addLog("Conexión segura establecida.");
       };
+      
       socketRef.current.onmessage = (e) => handleIncoming(e.data);
+      
+      socketRef.current.onclose = () => { setIsConnected(false); addLog("Desconectado."); };
+      socketRef.current.onerror = () => { setIsConnected(false); addLog("Error de conexión."); };
     }
   };
 
@@ -219,8 +238,14 @@ const App = () => {
       const data = JSON.parse(jsonStr);
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
-        let newContacts = vaultData.contacts;
-        if (!newContacts.includes(sender)) newContacts = [...newContacts, sender];
+        
+        const currentData = vaultDataRef.current;
+        let newContacts = [...currentData.contacts];
+        
+        if (!newContacts.includes(sender)) {
+          newContacts.push(sender);
+          addLog(`Nuevo contacto detectado: ${sender}`);
+        }
 
         const msgObj = {
           id: Date.now(),
@@ -233,8 +258,8 @@ const App = () => {
         };
 
         const newMessages = {
-          ...vaultData.messages,
-          [sender]: [...(vaultData.messages[sender] || []), msgObj]
+          ...currentData.messages,
+          [sender]: [...(currentData.messages[sender] || []), msgObj]
         };
 
         saveToVault({ contacts: newContacts, messages: newMessages });
@@ -246,34 +271,45 @@ const App = () => {
     const payload = content || inputText;
     if (!payload || !activeContact) return;
 
+    const target = activeContact.toLowerCase();
+    const currentData = vaultDataRef.current;
+
     const msgObj = {
       id: Date.now(),
       type,
       content: payload,
-      sender: vaultData.username,
+      sender: currentData.username,
       timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
       isMe: true,
-      burn: vaultData.settings.burnOnRead
+      burn: currentData.settings.burnOnRead
     };
 
     const newMessages = {
-      ...vaultData.messages,
-      [activeContact]: [...(vaultData.messages[activeContact] || []), msgObj]
+      ...currentData.messages,
+      [activeContact]: [...(currentData.messages[activeContact] || []), msgObj]
     };
+    
     saveToVault({ messages: newMessages });
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
-        type: 'PRIVATE_MSG', to: activeContact, content: payload, contentType: type
+        type: 'PRIVATE_MSG', to: target, content: payload, contentType: type
       }));
     }
+    
     if (type === 'text') setInputText('');
   };
 
   // --- 8. OPCIONES ---
   const addContact = () => {
-    if (newContactName && !vaultData.contacts.includes(newContactName)) {
-      saveToVault({ contacts: [...vaultData.contacts, newContactName] });
+    if (newContactName) {
+      const normalizedName = newContactName.trim().toLowerCase();
+      const currentContacts = vaultDataRef.current.contacts;
+      
+      if (!currentContacts.includes(normalizedName) && normalizedName !== vaultDataRef.current.username) {
+        saveToVault({ contacts: [...currentContacts, normalizedName] });
+        addLog(`Contacto agregado: ${normalizedName}`);
+      }
       setNewContactName('');
     }
   };
@@ -290,11 +326,10 @@ const App = () => {
     }
   };
 
-  // --- 9. VISTAS (Con estilos de respaldo inline por si Tailwind falla) ---
+  // --- 9. VISTAS ---
   
   const containerStyle = { backgroundColor: 'black', minHeight: '100vh', color: 'white', display: 'flex', flexDirection: 'column' };
 
-  // A. LOADING DE ESTILOS
   if (!stylesLoaded) {
     return (
        <div style={{ ...containerStyle, alignItems: 'center', justifyContent: 'center' }}>
@@ -304,44 +339,39 @@ const App = () => {
     );
   }
 
-  // B. SETUP INICIAL
+  // A. SETUP INICIAL
   if (!hasLocalVault) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans">
         <Shield className="w-16 h-16 text-blue-600 mb-6 animate-pulse"/>
         <h1 className="text-2xl font-bold mb-2 tracking-tight">Cifrado Grado Militar</h1>
         <p className="text-zinc-500 text-center mb-8 text-sm max-w-xs">
-          Configura tu identidad segura. Se guardará localmente cifrada con AES-GCM.
+          Configura tu identidad. Datos locales cifrados con AES-GCM.
         </p>
         
         <div className="w-full max-w-sm space-y-4">
-          <div>
-            <label className="text-xs text-zinc-500 uppercase font-bold ml-1">Usuario Público</label>
-            <input 
-              placeholder="Ej: Agente01" 
-              className="w-full bg-zinc-900 p-4 rounded-xl border border-zinc-800 outline-none text-white focus:border-blue-600 transition-colors"
-              onChange={e => setSetupData({...setupData, username: e.target.value.toLowerCase()})}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-zinc-500 uppercase font-bold ml-1">Ecuación Maestra (Llave)</label>
-            <input 
-              placeholder="Ej: 10+10" 
-              className="w-full bg-zinc-900 p-4 rounded-xl border border-zinc-800 outline-none text-white focus:border-blue-600 transition-colors font-mono"
-              onChange={e => setSetupData({...setupData, equation: e.target.value})}
-            />
-          </div>
+          <input 
+            placeholder="Usuario Público (Ej: agente01)" 
+            className="w-full bg-zinc-900 p-4 rounded-xl border border-zinc-800 outline-none text-white focus:border-blue-600 transition-colors"
+            onChange={e => setSetupData({...setupData, username: e.target.value.toLowerCase()})} 
+          />
+          <input 
+            placeholder="Ecuación Maestra (Ej: 10+10)" 
+            className="w-full bg-zinc-900 p-4 rounded-xl border border-zinc-800 outline-none text-white focus:border-blue-600 transition-colors font-mono"
+            onChange={e => setSetupData({...setupData, equation: e.target.value})}
+          />
           <button 
             disabled={!setupData.username || !setupData.equation}
             onClick={() => {
               const initialVault = { ...vaultData, username: setupData.username };
+              encryptionKeyRef.current = setupData.equation;
               saveToVault(initialVault, setupData.equation);
               setCalcDisplay('0');
               setIsVaultLocked(true); 
               setSetupData({ username: '', equation: '' }); 
               alert("Identidad protegida. Usa tu ecuación en la calculadora para entrar.");
             }}
-            className="w-full bg-blue-600 py-4 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all mt-4 shadow-lg shadow-blue-900/20"
+            className="w-full bg-blue-600 py-4 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 transition-all mt-4"
           >
             GENERAR BÓVEDA SEGURA
           </button>
@@ -350,7 +380,7 @@ const App = () => {
     );
   }
 
-  // C. PANTALLA DE CARGA
+  // B. PANTALLA DE CARGA
   if (isLoading) {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center text-blue-500 font-mono">
@@ -360,7 +390,7 @@ const App = () => {
     );
   }
 
-  // D. CALCULADORA (BLOQUEO)
+  // C. CALCULADORA (BLOQUEO)
   if (isVaultLocked) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
@@ -385,7 +415,7 @@ const App = () => {
     );
   }
 
-  // E. APLICACIÓN DESBLOQUEADA
+  // D. APLICACIÓN DESBLOQUEADA
 
   // Vista Contactos
   if (view === 'contacts') {
@@ -393,11 +423,21 @@ const App = () => {
       <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
         <header 
           onClick={handlePanicTrigger} 
-          className="p-4 border-b border-zinc-900 bg-black flex justify-between items-center select-none active:bg-red-900/20 transition-colors sticky top-0 z-20"
+          className="p-4 border-b border-zinc-900 bg-black flex justify-between items-center select-none sticky top-0 z-20"
         >
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-            <span className="font-bold text-sm tracking-tight">ID: {vaultData.username?.toUpperCase()}</span>
+            {isConnected ? (
+              <div className="flex items-center gap-1.5 bg-green-900/30 px-2 py-1 rounded-full border border-green-900/50">
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                <span className="text-[10px] font-bold text-green-500">ONLINE</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-red-900/30 px-2 py-1 rounded-full border border-red-900/50 cursor-pointer" onClick={() => connectToRelay(vaultData.username)}>
+                <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                <span className="text-[10px] font-bold text-red-500">RECONECTAR</span>
+              </div>
+            )}
+            <span className="font-bold text-sm tracking-tight ml-2">{vaultData.username?.toUpperCase()}</span>
           </div>
           <div className="flex gap-4">
             <Lock className="w-5 h-5 text-zinc-500 hover:text-white cursor-pointer" onClick={lockVault} />
@@ -408,7 +448,7 @@ const App = () => {
         <div className="p-4">
           <div className="flex gap-2 mb-6">
             <input 
-              placeholder="Agregar ID de amigo..." 
+              placeholder="ID de amigo (Ej: agente02)" 
               className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none border border-transparent focus:border-blue-900 transition-colors"
               value={newContactName} onChange={e => setNewContactName(e.target.value)}
             />
@@ -440,10 +480,16 @@ const App = () => {
           </div>
         </div>
 
-        <div className="mt-auto p-6 text-center border-t border-zinc-900 bg-black">
-            <button onClick={executePanicWipe} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto hover:bg-red-900/20 hover:text-red-500 transition-all">
-                <Skull className="w-3 h-3"/> DETONAR BÓVEDA (WIPE)
-            </button>
+        {/* Logs visuales (debug) */}
+        <div className="mt-auto border-t border-zinc-900 bg-black">
+            <div className="h-24 overflow-y-auto p-4 text-[9px] font-mono text-zinc-600">
+                {networkLogs.map(log => <div key={log.id}>[{log.time}] {log.action}</div>)}
+            </div>
+            <div className="p-4 text-center border-t border-zinc-900">
+                <button onClick={executePanicWipe} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto hover:bg-red-900/20 hover:text-red-500 transition-all">
+                    <Skull className="w-3 h-3"/> DETONAR BÓVEDA
+                </button>
+            </div>
         </div>
       </div>
     );
@@ -454,10 +500,11 @@ const App = () => {
     const msgs = vaultData.messages[activeContact] || [];
     return (
       <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
-        <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10 select-none active:bg-red-900/10">
+        <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10 select-none">
           <div className="flex items-center gap-3">
             <button onClick={() => setView('contacts')} className="p-2 hover:bg-zinc-900 rounded-full transition-colors"><ChevronLeft className="w-5 h-5"/></button>
             <span className="font-bold text-sm">{activeContact}</span>
+            {!isConnected && <WifiOff className="w-3 h-3 text-red-500 animate-pulse"/>}
           </div>
           <div className="flex gap-3">
             <button onClick={toggleBurnMode} className={`p-2 rounded-full transition-all ${vaultData.settings.burnOnRead ? 'bg-red-600/20 text-red-500 animate-pulse' : 'text-zinc-600 hover:text-zinc-400'}`}>
