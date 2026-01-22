@@ -92,7 +92,7 @@ const App = () => {
     });
   }, []);
 
-  // Lógica BURN (Autodestrucción)
+  // Lógica BURN
   useEffect(() => {
     let interval;
     if (view === 'chat' && activeContact && !isVaultLocked) {
@@ -232,21 +232,22 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
-  // --- AUDIO REPARADO (V3.0) ---
+  // --- AUDIO REPARADO (SISTEMA WHATSAPP: CLIC PARA GRABAR, CLIC PARA ENVIAR) ---
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Usar MIME type compatible para evitar audios vacíos
-      let mimeType = "audio/webm";
+      
+      let mimeType = "";
       if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mimeType = "audio/webm;codecs=opus";
       else if (MediaRecorder.isTypeSupported("audio/mp4")) mimeType = "audio/mp4";
+      else if (MediaRecorder.isTypeSupported("audio/webm")) mimeType = "audio/webm";
       
-      const options = { mimeType };
+      const options = mimeType ? { mimeType } : undefined;
       
       try {
         mediaRecorderRef.current = new MediaRecorder(stream, options);
       } catch(e) {
-        mediaRecorderRef.current = new MediaRecorder(stream); // Fallback sin opciones
+        mediaRecorderRef.current = new MediaRecorder(stream);
       }
 
       audioChunksRef.current = [];
@@ -256,15 +257,14 @@ const App = () => {
       };
 
       mediaRecorderRef.current.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
         const reader = new FileReader();
         reader.readAsDataURL(blob);
         reader.onloadend = () => {
-            if(reader.result && reader.result.length > 50) { // Validar que no esté vacío
+            if(reader.result && blob.size > 0) {
                 sendMessage('audio', reader.result);
             }
         };
-        // Apagar micrófono correctamente
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -272,17 +272,27 @@ const App = () => {
       setIsRecording(true);
     } catch (e) {
       alert("Error: No se pudo acceder al micrófono.");
+      setIsRecording(false);
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+  const stopRecordingAndSend = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
   };
 
-  // --- IMAGEN REPARADA (COMPRESIÓN AUTOMÁTICA) ---
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        // Detener sin enviar (anulamos el onstop)
+        mediaRecorderRef.current.onstop = null;
+        mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+        setIsRecording(false);
+    }
+  };
+
+  // IMAGEN
   const compressImage = (file) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -292,7 +302,6 @@ const App = () => {
             img.src = e.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                // Redimensionar a máximo 800px para garantizar envío rápido
                 const MAX_SIZE = 800;
                 let width = img.width;
                 let height = img.height;
@@ -307,7 +316,6 @@ const App = () => {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                // Convertir a JPEG calidad media (ligero)
                 resolve(canvas.toDataURL('image/jpeg', 0.7));
             };
         };
@@ -318,11 +326,9 @@ const App = () => {
     const file = e.target.files[0];
     if (file) {
       try {
-          // Comprimir imagen antes de enviar para evitar fallos de red
           const compressedBase64 = await compressImage(file);
           sendMessage('image', compressedBase64);
       } catch (err) {
-          // Fallback sin compresión
           const reader = new FileReader();
           reader.onloadend = () => sendMessage('image', reader.result);
           reader.readAsDataURL(file);
@@ -360,7 +366,6 @@ const App = () => {
     }
   };
 
-  // UI HELPERS
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
@@ -384,7 +389,7 @@ const App = () => {
     }
   };
 
-  // --- 4. RENDERIZADO CONDICIONAL ---
+  // --- VISTAS ---
 
   // A. SETUP
   if (!hasLocalVault) {
@@ -518,7 +523,7 @@ const App = () => {
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
           <div className="flex gap-3">
-            <button onClick={toggleBurnMode} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
+            <button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !burnMode } })} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
             <button onClick={deleteChat} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
           </div>
         </header>
@@ -544,28 +549,41 @@ const App = () => {
         </div>
 
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
-            <label className="p-3 text-zinc-500"><ImageIcon className="w-5 h-5"/><input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload}/></label>
-            
-            <input 
-                className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" 
-                placeholder={burnMode ? "Autodestrucción..." : "Mensaje..."} 
-                value={inputText} 
-                onChange={e => setInputText(e.target.value)} 
-                onKeyPress={e => e.key === 'Enter' && sendMessage('text')}
-            />
-            
-            {inputText.trim() ? (
-                <button onClick={() => sendMessage('text')} className="p-3 bg-blue-600 rounded-xl"><Send className="w-5 h-5"/></button>
+            {/* UI DE GRABACIÓN DE AUDIO MEJORADA */}
+            {isRecording ? (
+                <div className="flex-1 flex items-center gap-3 bg-zinc-900 rounded-xl px-4 py-3">
+                    <div className="animate-pulse text-red-500 flex items-center gap-2 flex-1">
+                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                        <span className="text-sm font-mono font-bold">GRABANDO...</span>
+                    </div>
+                    <button onClick={cancelRecording} className="text-zinc-400 hover:text-red-500 px-2"><Trash2 className="w-6 h-6"/></button>
+                </div>
             ) : (
-                <button 
-                    onMouseDown={startRecording} 
-                    onMouseUp={stopRecording} 
-                    onTouchStart={startRecording} 
-                    onTouchEnd={stopRecording}
-                    className={`p-3 rounded-xl transition-colors ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-zinc-800 text-zinc-400'}`}
-                >
-                    <Mic className="w-5 h-5"/>
+                <>
+                    <label className="p-3 text-zinc-500"><ImageIcon className="w-5 h-5"/><input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload}/></label>
+                    <input 
+                        className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" 
+                        placeholder={burnMode ? "Autodestrucción..." : "Mensaje..."} 
+                        value={inputText} 
+                        onChange={e => setInputText(e.target.value)} 
+                        onKeyPress={e => e.key === 'Enter' && sendMessage('text')}
+                    />
+                </>
+            )}
+            
+            {/* BOTÓN DINÁMICO DE ACCIÓN */}
+            {isRecording ? (
+                <button onClick={stopRecordingAndSend} className="p-3 bg-green-600 rounded-xl animate-pulse shadow-[0_0_15px_rgba(22,163,74,0.5)]">
+                    <Send className="w-5 h-5"/>
                 </button>
+            ) : (
+                inputText.trim() ? (
+                    <button onClick={() => sendMessage('text')} className="p-3 bg-blue-600 rounded-xl"><Send className="w-5 h-5"/></button>
+                ) : (
+                    <button onClick={startRecording} className="p-3 bg-zinc-800 text-zinc-400 rounded-xl active:scale-95 transition-transform">
+                        <Mic className="w-5 h-5"/>
+                    </button>
+                )
             )}
         </div>
       </div>
