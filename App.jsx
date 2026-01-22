@@ -1,55 +1,170 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lock, Shield, Settings, Send, Mic, Image as ImageIcon, UserPlus, X, ChevronLeft, Camera, PhoneOff, Trash2 } from 'lucide-react';
+import ReactDOM from 'react-dom';
+import { 
+  Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut
+} from 'lucide-react';
+
+// --- SILENCIADOR DE ADVERTENCIAS ---
+const originalError = console.error;
+console.error = (...args) => {
+  if (args[0]?.includes?.('ReactDOM.render')) return;
+  if (args[0]?.includes?.('createRoot')) return;
+  originalError.call(console, ...args);
+};
 
 // --- CONFIGURACIÓN ---
-const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com'; // Tu URL de Render
+const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
 
-// --- UTILIDADES ---
-const formatTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// --- UTILIDADES CRIPTOGRÁFICAS (AES-GCM 256) ---
+const CryptoUtils = {
+  deriveKey: async (password, salt) => {
+    const enc = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey(
+      "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+    );
+    return window.crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+      keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+    );
+  },
+
+  encryptData: async (dataObj, password) => {
+    const salt = window.crypto.getRandomValues(new Uint8Array(16));
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const key = await CryptoUtils.deriveKey(password, salt);
+    const enc = new TextEncoder();
+    const encodedData = enc.encode(JSON.stringify(dataObj));
+    
+    const ciphertext = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv }, key, encodedData
+    );
+
+    const buffer = new Uint8Array(salt.byteLength + iv.byteLength + ciphertext.byteLength);
+    buffer.set(salt, 0);
+    buffer.set(iv, salt.byteLength);
+    buffer.set(new Uint8Array(ciphertext), salt.byteLength + iv.byteLength);
+    
+    return btoa(String.fromCharCode(...buffer));
+  },
+
+  decryptData: async (encryptedBase64, password) => {
+    try {
+      const binaryStr = atob(encryptedBase64);
+      const buffer = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) buffer[i] = binaryStr.charCodeAt(i);
+
+      const salt = buffer.slice(0, 16);
+      const iv = buffer.slice(16, 28);
+      const data = buffer.slice(28);
+      const key = await CryptoUtils.deriveKey(password, salt);
+
+      const decrypted = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv }, key, data
+      );
+
+      const dec = new TextDecoder();
+      return JSON.parse(dec.decode(decrypted));
+    } catch (e) {
+      return null;
+    }
+  }
+};
 
 const App = () => {
-  // --- ESTADOS GLOBALES ---
-  const [view, setView] = useState('calc'); // calc, setup, connecting, contacts, chat
-  const [myUsername, setMyUsername] = useState('');
+  // --- Estados Principales ---
+  const [hasLocalVault, setHasLocalVault] = useState(() => !!localStorage.getItem('ghost_vault_v4'));
+  const [isVaultLocked, setIsVaultLocked] = useState(true);
+  const [view, setView] = useState('contacts'); 
+  const [isLoading, setIsLoading] = useState(false);
   
-  // Estados de Calculadora
+  // Seguridad & Datos
   const [calcDisplay, setCalcDisplay] = useState('0');
-  const [secretEquation, setSecretEquation] = useState('');
-  const [hasSetup, setHasSetup] = useState(false);
+  const [setupData, setSetupData] = useState({ username: '', equation: '' }); 
+  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
 
-  // Estados de Chat y Contactos
-  const [contacts, setContacts] = useState([]); // [{ name: 'juan', messages: [] }]
-  const [activeContact, setActiveContact] = useState(null);
+  // UI Chat
+  const [activeContact, setActiveContact] = useState(null); 
   const [inputText, setInputText] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [showAddContact, setShowAddContact] = useState(false);
   const [newContactName, setNewContactName] = useState('');
+  const [panicCount, setPanicCount] = useState(0);
 
   // Refs
-  const socket = useRef(null);
-  const mediaRecorder = useRef(null);
-  const audioChunks = useRef([]);
+  const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const panicTimeoutRef = useRef(null);
 
-  // Scroll automático al último mensaje
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [contacts, activeContact]);
+  // 2. SISTEMA DE PÁNICO
+  const handlePanicTrigger = () => {
+    setPanicCount(prev => prev + 1);
+    if (panicTimeoutRef.current) clearTimeout(panicTimeoutRef.current);
+    panicTimeoutRef.current = setTimeout(() => setPanicCount(0), 1000); 
 
-  // --- LÓGICA DE CALCULADORA ---
-  const safeEvaluate = (str) => {
-    try {
-      return String(new Function('return ' + str.replace(/×/g, '*').replace(/÷/g, '/'))());
-    } catch { return "Error"; }
+    if (panicCount >= 2) executePanicWipe();
   };
 
+  const executePanicWipe = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    setVaultData(null);
+    window.location.href = "https://google.com";
+  };
+
+  // 3. GESTIÓN DE BÓVEDA
+  const saveToVault = async (newData, overrideEquation = null) => {
+    const keyToUse = overrideEquation || setupData.equation; 
+    if (!keyToUse) return;
+
+    const updatedVault = { ...vaultData, ...newData };
+    setVaultData(updatedVault);
+    
+    const encrypted = await CryptoUtils.encryptData(updatedVault, keyToUse);
+    localStorage.setItem('ghost_vault_v4', encrypted);
+    setHasLocalVault(true);
+  };
+
+  const attemptUnlock = async () => {
+    setIsLoading(true);
+    const stored = localStorage.getItem('ghost_vault_v4');
+    
+    // Descifrar con la ecuación en pantalla
+    const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
+    setIsLoading(false);
+    
+    if (decrypted) {
+      setSetupData({ ...setupData, equation: calcDisplay }); 
+      setVaultData(decrypted);
+      setIsVaultLocked(false);
+      connectToRelay(decrypted.username);
+    } else {
+      // Fallo: Simular calculadora
+      try {
+        const res = String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))());
+        setCalcDisplay(res);
+      } catch {
+        setCalcDisplay('Error');
+      }
+    }
+  };
+
+  const lockVault = () => {
+    setIsVaultLocked(true);
+    setCalcDisplay('0');
+    if (socketRef.current) socketRef.current.close();
+  };
+
+  // 4. LÓGICA DE CALCULADORA
   const handleCalcClick = (val) => {
     if (val === '=') {
-      if (hasSetup && calcDisplay === secretEquation) {
-        connectToServer();
+      if (hasLocalVault) {
+        attemptUnlock(); 
       } else {
-        setCalcDisplay(safeEvaluate(calcDisplay));
+        // Si no hay bóveda, funciona como calculadora normal
+        try {
+            const res = String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))());
+            setCalcDisplay(res);
+        } catch { setCalcDisplay('Error'); }
       }
       return;
     }
@@ -57,383 +172,305 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
-  // --- CONEXIÓN AL SERVIDOR ---
-  const connectToServer = () => {
-    setView('connecting');
-    socket.current = new WebSocket(RELAY_URL);
-
-    socket.current.onopen = () => {
-      // Registrarse en el servidor
-      socket.current.send(JSON.stringify({ 
-        type: 'REGISTER', 
-        username: myUsername 
-      }));
-      setView('contacts');
-    };
-
-    socket.current.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'INCOMING_MSG') {
-          handleIncomingMessage(data);
-        }
-      } catch (e) { console.error(e); }
-    };
-  };
-
-  const handleIncomingMessage = (data) => {
-    const sender = data.from;
-    setContacts(prev => {
-      // Verificar si el contacto existe, si no, crearlo temporalmente
-      const exists = prev.find(c => c.name === sender);
-      const newMessage = {
-        id: Date.now(),
-        sender: 'peer',
-        content: data.content,
-        type: data.contentType,
-        time: data.timestamp
+  // 5. RED
+  const connectToRelay = (user) => {
+    if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
+      socketRef.current = new WebSocket(RELAY_URL);
+      socketRef.current.onopen = () => {
+        socketRef.current.send(JSON.stringify({ type: 'REGISTER', username: user }));
       };
-
-      if (exists) {
-        return prev.map(c => c.name === sender 
-          ? { ...c, messages: [...c.messages, newMessage] } 
-          : c
-        );
-      } else {
-        // Nuevo contacto desconocido
-        return [...prev, { name: sender, messages: [newMessage] }];
-      }
-    });
-  };
-
-  // --- GESTIÓN DE CONTACTOS ---
-  const addContact = () => {
-    if (!newContactName.trim()) return;
-    const name = newContactName.trim().toLowerCase();
-    if (!contacts.find(c => c.name === name) && name !== myUsername) {
-      setContacts([...contacts, { name, messages: [] }]);
-    }
-    setNewContactName('');
-    setShowAddContact(false);
-  };
-
-  // --- ENVIAR MENSAJES ---
-  const sendMessage = (content, type = 'text') => {
-    if (!activeContact) return;
-
-    const msgPayload = {
-      type: 'PRIVATE_MSG',
-      to: activeContact.name,
-      content: content,
-      contentType: type
-    };
-
-    // Enviar al servidor
-    if (socket.current?.readyState === WebSocket.OPEN) {
-      socket.current.send(JSON.stringify(msgPayload));
-    
-      // Guardar localmente
-      const newMessage = {
-        id: Date.now(),
-        sender: 'me',
-        content: content,
-        type: type,
-        time: Date.now()
-      };
-
-      setContacts(prev => prev.map(c => 
-        c.name === activeContact.name 
-          ? { ...c, messages: [...c.messages, newMessage] } 
-          : c
-      ));
-
-      if (type === 'text') setInputText('');
+      socketRef.current.onmessage = (e) => handleIncoming(e.data);
     }
   };
 
-  // --- MULTIMEDIA: AUDIO ---
-  const startRecording = async () => {
+  const handleIncoming = (jsonStr) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorder.current = new MediaRecorder(stream);
-      audioChunks.current = [];
+      const data = JSON.parse(jsonStr);
+      if (data.type === 'INCOMING_MSG') {
+        const sender = data.from;
+        let newContacts = vaultData.contacts;
+        if (!newContacts.includes(sender)) newContacts = [...newContacts, sender];
 
-      mediaRecorder.current.ondataavailable = (e) => audioChunks.current.push(e.data);
-      mediaRecorder.current.onstop = () => {
-        const blob = new Blob(audioChunks.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onloadend = () => sendMessage(reader.result, 'audio');
-      };
+        const msgObj = {
+          id: Date.now(),
+          type: data.contentType,
+          content: data.content,
+          sender: sender,
+          timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+          isMe: false,
+          read: false
+        };
 
-      mediaRecorder.current.start();
-      setIsRecording(true);
-    } catch (e) {
-      alert("Permiso de micrófono denegado");
+        const newMessages = {
+          ...vaultData.messages,
+          [sender]: [...(vaultData.messages[sender] || []), msgObj]
+        };
+
+        saveToVault({ contacts: newContacts, messages: newMessages });
+      }
+    } catch (e) {}
+  };
+
+  const sendMessage = (type = 'text', content = null) => {
+    const payload = content || inputText;
+    if (!payload || !activeContact) return;
+
+    const msgObj = {
+      id: Date.now(),
+      type,
+      content: payload,
+      sender: vaultData.username,
+      timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+      isMe: true,
+      burn: vaultData.settings.burnOnRead
+    };
+
+    const newMessages = {
+      ...vaultData.messages,
+      [activeContact]: [...(vaultData.messages[activeContact] || []), msgObj]
+    };
+    saveToVault({ messages: newMessages });
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: 'PRIVATE_MSG', to: activeContact, content: payload, contentType: type
+      }));
+    }
+    if (type === 'text') setInputText('');
+  };
+
+  // 6. OPCIONES
+  const addContact = () => {
+    if (newContactName && !vaultData.contacts.includes(newContactName)) {
+      saveToVault({ contacts: [...vaultData.contacts, newContactName] });
+      setNewContactName('');
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorder.current) {
-      mediaRecorder.current.stop();
-      setIsRecording(false);
-    }
+  const toggleBurnMode = () => {
+    saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } });
   };
 
-  // --- MULTIMEDIA: FOTOS ---
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Comprimir o limitar tamaño es recomendable aquí
-      const reader = new FileReader();
-      reader.onloadend = () => sendMessage(reader.result, 'image');
-      reader.readAsDataURL(file);
+  const deleteChat = () => {
+    if(confirm("¿Eliminar historial con " + activeContact + "?")) {
+      const newMessages = { ...vaultData.messages };
+      delete newMessages[activeContact];
+      saveToVault({ messages: newMessages });
     }
   };
 
   // --- VISTAS ---
 
-  // 1. SETUP INICIAL
-  if (!hasSetup) {
+  // A. SETUP INICIAL
+  if (!hasLocalVault) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6">
-        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-8">
-          <div className="flex justify-center mb-6"><Shield className="text-blue-500 w-12 h-12" /></div>
-          <h1 className="text-xl font-bold text-center mb-6">Configuración de Seguridad</h1>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs text-slate-500 uppercase font-bold">Tu Usuario (Público)</label>
-              <input 
-                type="text" 
-                placeholder="Ej: ghost_01" 
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 mt-1"
-                value={myUsername}
-                onChange={(e) => setMyUsername(e.target.value.toLowerCase())}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 uppercase font-bold">Ecuación de Acceso</label>
-              <input 
-                type="text" 
-                placeholder="Ej: 10+25" 
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 mt-1"
-                value={secretEquation}
-                onChange={(e) => setSecretEquation(e.target.value)}
-              />
-            </div>
-            <button 
-              onClick={() => { if(myUsername && secretEquation) setHasSetup(true); }}
-              className="w-full bg-blue-600 py-3 rounded-xl font-bold mt-4"
-            >
-              ENCRIPTAR Y GUARDAR
-            </button>
+      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans">
+        <Shield className="w-16 h-16 text-blue-600 mb-6 animate-pulse"/>
+        <h1 className="text-2xl font-bold mb-2 tracking-tight">Cifrado Grado Militar</h1>
+        <p className="text-zinc-500 text-center mb-8 text-sm max-w-xs">
+          Configura tu identidad segura. Se guardará localmente cifrada con AES-GCM.
+        </p>
+        
+        <div className="w-full max-w-sm space-y-4">
+          <div>
+            <label className="text-xs text-zinc-500 uppercase font-bold ml-1">Usuario Público</label>
+            <input 
+              placeholder="Ej: Agente01" 
+              className="w-full bg-zinc-900 p-4 rounded-xl border border-zinc-800 outline-none text-white focus:border-blue-600 transition-colors"
+              onChange={e => setSetupData({...setupData, username: e.target.value.toLowerCase()})}
+            />
           </div>
+          <div>
+            <label className="text-xs text-zinc-500 uppercase font-bold ml-1">Ecuación Maestra (Llave)</label>
+            <input 
+              placeholder="Ej: 10+10" 
+              className="w-full bg-zinc-900 p-4 rounded-xl border border-zinc-800 outline-none text-white focus:border-blue-600 transition-colors font-mono"
+              onChange={e => setSetupData({...setupData, equation: e.target.value})}
+            />
+          </div>
+          <button 
+            disabled={!setupData.username || !setupData.equation}
+            onClick={() => {
+              // 1. Guardar la bóveda
+              const initialVault = { ...vaultData, username: setupData.username };
+              saveToVault(initialVault, setupData.equation);
+              
+              // 2. CORRECCIÓN: NO ENTRAR DIRECTO. IR A CALCULADORA.
+              setCalcDisplay('0');
+              setIsVaultLocked(true); // Bloquear para obligar login
+              setSetupData({ username: '', equation: '' }); // Limpiar RAM temporal
+              alert("Identidad protegida. Usa tu ecuación en la calculadora para entrar.");
+            }}
+            className="w-full bg-blue-600 py-4 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all mt-4 shadow-lg shadow-blue-900/20"
+          >
+            GENERAR BÓVEDA SEGURA
+          </button>
         </div>
       </div>
     );
   }
 
-  // 2. CALCULADORA (CAMUFLAJE)
-  if (view === 'calc') {
+  // B. PANTALLA DE CARGA
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center text-blue-500 font-mono">
+        <RefreshCw className="w-12 h-12 animate-spin mb-4"/>
+        <p className="text-xs tracking-widest uppercase">DESCIFRANDO BÓVEDA LOCAL...</p>
+      </div>
+    );
+  }
+
+  // C. CALCULADORA (BLOQUEO)
+  if (isVaultLocked) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-xs aspect-[9/16] bg-black flex flex-col">
-          <div className="flex-1 flex flex-col justify-end p-6">
-            <div className="text-right text-6xl font-light tracking-tighter mb-4 overflow-hidden">{calcDisplay}</div>
-          </div>
-          <div className="grid grid-cols-4 gap-3 p-4">
-            {['C', '+/-', '%', '÷', '7', '8', '9', '×', '4', '5', '6', '-', '1', '2', '3', '+', '0', '.', '='].map((btn) => (
-              <button 
-                key={btn}
-                onClick={() => handleCalcClick(btn)}
-                className={`text-2xl h-16 w-16 rounded-full flex items-center justify-center ${['÷','×','-','+','='].includes(btn)?'bg-orange-500':'bg-zinc-800'} ${['C','+/-','%'].includes(btn)?'bg-zinc-400 text-black':''}`}
-              >
-                {btn}
-              </button>
-            ))}
-          </div>
+            <div className="flex-1 flex flex-col justify-end p-6">
+              <div className="text-right text-6xl font-light tracking-tighter mb-4 overflow-hidden">{calcDisplay}</div>
+            </div>
+            <div className="grid grid-cols-4 gap-3 p-4">
+              {['C', '+/-', '%', '÷', '7', '8', '9', '×', '4', '5', '6', '-', '1', '2', '3', '+', '0', '.', '='].map((btn) => (
+                <button key={btn} onClick={() => handleCalcClick(btn)} 
+                  className={`text-2xl h-16 w-16 rounded-full flex items-center justify-center ${['÷','×','-','+','='].includes(btn)?'bg-orange-600':'bg-zinc-800'} ${['C','+/-','%'].includes(btn)?'bg-zinc-400 text-black':''}`}>
+                  {btn}
+                </button>
+              ))}
+            </div>
+            <div className="text-center mt-2 flex flex-col items-center gap-1">
+              <Lock className="w-3 h-3 text-zinc-600"/>
+              <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-widest">AES-256 Encrypted</span>
+            </div>
         </div>
       </div>
     );
   }
 
-  // 3. CONECTANDO...
-  if (view === 'connecting') {
-    return (
-      <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center">
-        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-        <p className="mt-4 text-xs font-mono text-blue-400">ESTABLECIENDO ENLACE SEGURO...</p>
-      </div>
-    );
-  }
+  // D. APLICACIÓN DESBLOQUEADA
 
-  // 4. LISTA DE CONTACTOS
+  // Vista Contactos
   if (view === 'contacts') {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col max-w-2xl mx-auto border-x border-slate-800">
-        <header className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center sticky top-0 z-10">
-          <div>
-            <h2 className="font-bold text-lg">Chats</h2>
-            <p className="text-xs text-slate-400 font-mono">Usuario: {myUsername}</p>
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
+        <header 
+          onClick={handlePanicTrigger} 
+          className="p-4 border-b border-zinc-900 bg-black flex justify-between items-center select-none active:bg-red-900/20 transition-colors sticky top-0 z-20"
+        >
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+            <span className="font-bold text-sm tracking-tight">ID: {vaultData.username?.toUpperCase()}</span>
           </div>
-          <div className="flex gap-2">
-             <button onClick={() => setView('calc')} className="p-2 bg-slate-800 rounded-full"><Lock className="w-5 h-5" /></button>
-             <button onClick={() => setShowAddContact(true)} className="p-2 bg-blue-600 rounded-full"><UserPlus className="w-5 h-5" /></button>
+          <div className="flex gap-4">
+            <Lock className="w-5 h-5 text-zinc-500 hover:text-white cursor-pointer" onClick={lockVault} />
+            <Settings className="w-5 h-5 text-zinc-600 cursor-help" onClick={(e) => { e.stopPropagation(); alert("Triple toque en barra superior = WIPE TOTAL"); }}/>
           </div>
         </header>
 
-        {showAddContact && (
-          <div className="p-4 bg-slate-900 border-b border-slate-800 animate-in slide-in-from-top">
-            <div className="flex gap-2">
-              <input 
-                placeholder="Nombre de usuario del amigo..."
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm"
-                value={newContactName}
-                onChange={(e) => setNewContactName(e.target.value)}
-              />
-              <button onClick={addContact} className="bg-blue-600 px-4 rounded-lg text-sm font-bold">Agregar</button>
-              <button onClick={() => setShowAddContact(false)} className="p-2 text-slate-400"><X className="w-5 h-5" /></button>
-            </div>
+        <div className="p-4">
+          <div className="flex gap-2 mb-6">
+            <input 
+              placeholder="Agregar ID de amigo..." 
+              className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none border border-transparent focus:border-blue-900 transition-colors"
+              value={newContactName} onChange={e => setNewContactName(e.target.value)}
+            />
+            <button onClick={addContact} className="bg-blue-600 p-3 rounded-lg hover:bg-blue-500 transition-colors"><UserPlus className="w-5 h-5"/></button>
           </div>
-        )}
 
-        <div className="flex-1 overflow-y-auto">
-          {contacts.length === 0 ? (
-            <div className="p-10 text-center opacity-30 mt-10">
-              <UserPlus className="w-16 h-16 mx-auto mb-4" />
-              <p>No tienes contactos. Agrega a alguien para empezar.</p>
-            </div>
-          ) : (
-            contacts.map(contact => (
-              <div 
-                key={contact.name}
-                onClick={() => { setActiveContact(contact); setView('chat'); }}
-                className="p-4 border-b border-slate-900 hover:bg-slate-900 cursor-pointer flex justify-between items-center"
+          <div className="space-y-2">
+            {vaultData.contacts.length === 0 && (
+               <div className="text-center text-zinc-600 py-10 text-sm">Sin contactos. Agrega uno arriba.</div>
+            )}
+            {vaultData.contacts.map(c => (
+              <div key={c} onClick={() => { setActiveContact(c); setView('chat'); }}
+                className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900 border border-transparent hover:border-zinc-800 transition-all"
               >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-gradient-to-br from-blue-600 to-purple-700 rounded-full flex items-center justify-center font-bold text-lg uppercase">
-                    {contact.name[0]}
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gradient-to-tr from-blue-900 to-slate-900 rounded-full flex items-center justify-center font-bold text-sm uppercase border border-white/10">
+                    {c[0]}
                   </div>
                   <div>
-                    <h3 className="font-bold capitalize">{contact.name}</h3>
-                    <p className="text-xs text-slate-400 truncate w-40">
-                      {contact.messages.length > 0 
-                        ? (contact.messages[contact.messages.length - 1].type === 'image' ? '📷 Foto' : contact.messages[contact.messages.length - 1].content.substring(0, 20) + '...') 
-                        : 'Chat nuevo cifrado'}
+                    <h3 className="font-medium">{c}</h3>
+                    <p className="text-[10px] text-zinc-500">
+                      {vaultData.messages[c] ? `${vaultData.messages[c].length} mensajes` : 'Nuevo chat'}
                     </p>
                   </div>
                 </div>
-                {contact.messages.length > 0 && (
-                  <span className="text-[10px] text-slate-500">
-                    {formatTime(contact.messages[contact.messages.length - 1].time)}
-                  </span>
-                )}
+                <ChevronLeft className="rotate-180 w-5 h-5 text-zinc-600"/>
               </div>
-            ))
-          )}
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-auto p-6 text-center border-t border-zinc-900 bg-black">
+            <button onClick={executePanicWipe} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto hover:bg-red-900/20 hover:text-red-500 transition-all">
+                <Skull className="w-3 h-3"/> DETONAR BÓVEDA (WIPE)
+            </button>
         </div>
       </div>
     );
   }
 
-  // 5. CHAT INDIVIDUAL
-  if (view === 'chat' && activeContact) {
-    // Filtrar mensajes para mostrar solo los de este contacto
-    const currentMessages = contacts.find(c => c.name === activeContact.name)?.messages || [];
-
+  // Vista Chat
+  if (view === 'chat') {
+    const msgs = vaultData.messages[activeContact] || [];
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col max-w-2xl mx-auto">
-        {/* Header Chat */}
-        <header className="p-3 bg-slate-900 border-b border-slate-800 flex items-center gap-3 sticky top-0 z-10">
-          <button onClick={() => setView('contacts')}><ChevronLeft /></button>
-          <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center uppercase font-bold text-sm">
-            {activeContact.name[0]}
+      <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
+        <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10 select-none active:bg-red-900/10">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setView('contacts')} className="p-2 hover:bg-zinc-900 rounded-full transition-colors"><ChevronLeft className="w-5 h-5"/></button>
+            <span className="font-bold text-sm">{activeContact}</span>
           </div>
-          <div className="flex-1">
-            <h3 className="font-bold text-sm capitalize">{activeContact.name}</h3>
-            <div className="flex items-center gap-1 text-[10px] text-green-500">
-              <Shield className="w-3 h-3" /> E2EE PQC-Hybrid
-            </div>
+          <div className="flex gap-3">
+            <button onClick={toggleBurnMode} className={`p-2 rounded-full transition-all ${vaultData.settings.burnOnRead ? 'bg-red-600/20 text-red-500 animate-pulse' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                <Flame className="w-4 h-4"/>
+            </button>
+            <button onClick={deleteChat} className="text-zinc-600 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
           </div>
-          <button className="text-slate-500"><PhoneOff className="w-5 h-5" /></button>
         </header>
 
-        {/* Mensajes */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-black/90">
-          {currentMessages.map(msg => (
-            <div key={msg.id} className={`flex ${msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-2xl p-2 ${msg.sender === 'me' ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-slate-800 text-white rounded-tl-sm'}`}>
-                
-                {/* Contenido: Texto */}
-                {msg.type === 'text' && <p className="text-sm px-2 py-1">{msg.content}</p>}
-                
-                {/* Contenido: Imagen */}
-                {msg.type === 'image' && (
-                  <img src={msg.content} alt="foto" className="rounded-lg max-h-60 border border-white/10" />
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {msgs.length === 0 && (
+             <div className="text-center mt-10 opacity-20">
+               <Shield className="w-12 h-12 mx-auto mb-2"/>
+               <p className="text-xs">Inicio del historial cifrado.</p>
+             </div>
+          )}
+          {msgs.map((msg, i) => (
+            <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}>
+                {msg.type === 'image' ? (
+                  <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>
+                ) : (
+                  <p className="text-sm leading-relaxed">{msg.content}</p>
                 )}
-
-                {/* Contenido: Audio */}
-                {msg.type === 'audio' && (
-                  <audio controls src={msg.content} className="h-8 w-48 mt-1" />
-                )}
-
-                <p className="text-[9px] text-white/50 text-right mt-1 px-1">
-                  {formatTime(msg.time)}
-                </p>
+                <div className="flex justify-end items-center gap-1 mt-1 opacity-50">
+                    {msg.burn && <Flame className="w-3 h-3 text-red-500"/>}
+                    <span className="text-[9px]">{msg.timestamp}</span>
+                </div>
               </div>
             </div>
           ))}
-          <div ref={messagesEndRef} />
+          <div ref={messagesEndRef}/>
         </div>
 
-        {/* Input Area */}
-        <div className="p-2 bg-slate-900 border-t border-slate-800 flex items-center gap-2">
-          {/* Input Oculto para Fotos */}
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
-            accept="image/*"
-            onChange={handleImageUpload} 
-          />
-          
-          <button 
-            onClick={() => fileInputRef.current.click()} 
-            className="p-2 text-slate-400 hover:text-white"
-          >
-            <Camera className="w-6 h-6" />
-          </button>
-
-          <div className="flex-1 bg-slate-800 rounded-full flex items-center px-4 py-2 border border-slate-700">
+        <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
+            <label className="p-3 text-zinc-500 hover:text-white cursor-pointer bg-zinc-900 rounded-xl mb-[1px]">
+              <ImageIcon className="w-5 h-5"/>
+              <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={e => {
+                  const f = e.target.files[0];
+                  if(f) { const r = new FileReader(); r.onload=()=>sendMessage('image', r.result); r.readAsDataURL(f); }
+                  e.target.value='';
+              }}/>
+            </label>
             <input 
-              type="text" 
-              placeholder="Mensaje..." 
-              className="bg-transparent border-none flex-1 text-sm focus:outline-none"
+              className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm outline-none text-white focus:ring-1 focus:ring-blue-900 transition-all"
+              placeholder={vaultData.settings.burnOnRead ? "Mensaje autodestructible..." : "Mensaje seguro..."}
               value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage(inputText, 'text')}
+              onChange={e => setInputText(e.target.value)}
+              onKeyPress={e => e.key === 'Enter' && sendMessage('text')}
             />
-          </div>
-
-          {inputText.trim() ? (
-            <button 
-              onClick={() => sendMessage(inputText, 'text')}
-              className="p-3 bg-blue-600 rounded-full text-white shadow-lg"
-            >
-              <Send className="w-5 h-5" />
+            <button onClick={() => sendMessage('text')} className="p-3 bg-blue-600 rounded-xl hover:bg-blue-500 transition-colors mb-[1px]">
+               <Send className="w-5 h-5"/>
             </button>
-          ) : (
-            <button 
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onTouchStart={startRecording}
-              onTouchEnd={stopRecording}
-              className={`p-3 rounded-full text-white transition-all shadow-lg ${isRecording ? 'bg-red-500 scale-110' : 'bg-slate-700'}`}
-            >
-              <Mic className="w-5 h-5" />
-            </button>
-          )}
         </div>
       </div>
     );
@@ -441,5 +478,12 @@ const App = () => {
 
   return null;
 };
+
+// PUNTO DE MONTAJE
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { }
+  ReactDOM.render(<App />, rootElement);
+}
 
 export default App;
