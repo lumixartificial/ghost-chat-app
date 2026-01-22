@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -46,7 +46,7 @@ const CryptoUtils = {
 };
 
 const App = () => {
-  // --- 1. ESTADOS (HOOKS SIEMPRE AL INICIO) ---
+  // --- 1. ESTADOS ---
   const [hasLocalVault, setHasLocalVault] = useState(() => { try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; }});
   const [isVaultLocked, setIsVaultLocked] = useState(true);
   const [view, setView] = useState('contacts'); 
@@ -57,12 +57,12 @@ const App = () => {
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
-  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
+  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true } });
   
   // Refs
   const vaultDataRef = useRef(vaultData);
   const encryptionKeyRef = useRef('');
-  const panicCounterRef = useRef(0); // Ref para el pánico (más fiable que state)
+  const panicCounterRef = useRef(0);
   const lastPanicTapRef = useRef(0);
   
   // UI Chat
@@ -79,7 +79,7 @@ const App = () => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
 
-  // --- 2. EFECTOS (SIEMPRE AL INICIO) ---
+  // --- 2. EFECTOS ---
 
   // Sincronizar Ref con State
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
@@ -94,24 +94,22 @@ const App = () => {
     });
   }, []);
 
-  // Lógica BURN (Autodestrucción) - MOVIDA AQUÍ PARA EVITAR ERRORES
+  // Lógica BURN (Autodestrucción)
   useEffect(() => {
     let interval;
-    // Solo activamos el intervalo si estamos en el chat y no está bloqueado
     if (view === 'chat' && activeContact && !isVaultLocked) {
       interval = setInterval(() => {
         const msgs = vaultData.messages[activeContact] || [];
         const now = Date.now();
-        // Borrar mensajes quemables ajenos que tengan más de 5s desde su ID (timestamp)
         const toDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.id > 5000));
         
         if (toDelete.length > 0) {
            const newMsgs = msgs.filter(m => !toDelete.includes(m));
-           // Guardado silencioso sin cambiar estado visual brusco
            const newData = { ...vaultData };
            newData.messages[activeContact] = newMsgs;
-           setVaultData(newData); // Actualiza estado
-           // No guardamos en disco en cada tick para rendimiento, solo en eventos grandes
+           setVaultData(newData); 
+           // Guardado asíncrono para no bloquear UI
+           saveToVault({ messages: { ...vaultData.messages, [activeContact]: newMsgs } });
         }
       }, 1000);
     }
@@ -120,7 +118,7 @@ const App = () => {
 
   // --- 3. FUNCIONES LÓGICAS ---
 
-  // PÁNICO (Triple Tap Robusto)
+  // PÁNICO
   const handlePanicTrigger = () => {
     const now = Date.now();
     if (now - lastPanicTapRef.current < 500) {
@@ -159,7 +157,10 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
-      if (!decrypted.settings) decrypted.settings = { burnOnRead: false };
+      // Defaults para configuración
+      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true };
+      if (decrypted.settings.persistHistory === undefined) decrypted.settings.persistHistory = true;
+
       encryptionKeyRef.current = calcDisplay; 
       setVaultData(decrypted);
       setIsVaultLocked(false);
@@ -167,6 +168,24 @@ const App = () => {
     } else {
       try { setCalcDisplay(String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))())); } catch { setCalcDisplay('Error'); }
     }
+  };
+
+  const lockVault = async () => {
+    // Si la persistencia está desactivada, limpiamos mensajes antes de cerrar
+    if (vaultData.settings?.persistHistory === false) {
+        const cleanData = { ...vaultData, messages: {} };
+        if (encryptionKeyRef.current) {
+            const encrypted = await CryptoUtils.encryptData(cleanData, encryptionKeyRef.current);
+            localStorage.setItem(STORAGE_KEY, encrypted);
+        }
+    }
+    
+    setIsVaultLocked(true);
+    setCalcDisplay('0');
+    encryptionKeyRef.current = ''; 
+    if (socketRef.current) socketRef.current.close();
+    setIsConnected(false);
+    setView('contacts'); // Reset view for next login
   };
 
   // RED
@@ -253,7 +272,7 @@ const App = () => {
         if (confirm("⚠️ ¿RESET DE FÁBRICA?")) {
           localStorage.removeItem(STORAGE_KEY);
           setHasLocalVault(false);
-          setVaultData({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
+          setVaultData({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true } });
           setCalcDisplay('0');
           return;
         }
@@ -273,14 +292,6 @@ const App = () => {
     } else {
       alert("Para instalar: \nAndroid: Menú > Instalar aplicación\niOS: Compartir > Añadir a pantalla de inicio");
     }
-  };
-
-  const lockVault = () => {
-    setIsVaultLocked(true);
-    setCalcDisplay('0');
-    encryptionKeyRef.current = ''; 
-    if (socketRef.current) socketRef.current.close();
-    setIsConnected(false);
   };
 
   // --- 4. RENDERIZADO CONDICIONAL ---
@@ -340,7 +351,66 @@ const App = () => {
     );
   }
 
-  // C. APP - CONTACTOS
+  // C. AJUSTES (NUEVA VISTA)
+  if (view === 'settings') {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
+         <header className="p-4 border-b border-zinc-900 bg-black flex items-center gap-3 sticky top-0 z-20">
+           <button onClick={() => setView('contacts')}><ChevronLeft/></button>
+           <span className="font-bold text-lg">Ajustes de Seguridad</span>
+         </header>
+         <div className="p-4 space-y-6">
+           {/* Sección 1: Mensajería */}
+           <div>
+             <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Privacidad de Mensajes</h3>
+             
+             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl mb-2">
+               <div className="flex items-center gap-3">
+                 <div className="p-2 bg-red-900/20 rounded-lg text-red-500"><Flame className="w-5 h-5"/></div>
+                 <div>
+                   <p className="font-medium text-sm">Autodestrucción</p>
+                   <p className="text-[10px] text-zinc-500">Borrar mensajes leídos (5s)</p>
+                 </div>
+               </div>
+               <div onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings?.burnOnRead } })} className="cursor-pointer">
+                  {vaultData.settings?.burnOnRead ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
+               </div>
+             </div>
+
+             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
+               <div className="flex items-center gap-3">
+                 <div className="p-2 bg-blue-900/20 rounded-lg text-blue-500"><Globe className="w-5 h-5"/></div>
+                 <div>
+                   <p className="font-medium text-sm">Persistencia</p>
+                   <p className="text-[10px] text-zinc-500">Mantener chats al cerrar</p>
+                 </div>
+               </div>
+               <div onClick={() => saveToVault({ settings: { ...vaultData.settings, persistHistory: !vaultData.settings?.persistHistory } })} className="cursor-pointer">
+                  {vaultData.settings?.persistHistory ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
+               </div>
+             </div>
+           </div>
+
+           {/* Sección 2: Acciones */}
+           <div>
+             <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Zona de Peligro</h3>
+             
+             <button onClick={() => { if(confirm("¿Vaciar todos los chats?")) saveToVault({ messages: {} }); }} className="w-full p-4 bg-zinc-900 rounded-xl flex items-center gap-3 text-red-400 hover:bg-red-900/10 mb-2 transition-colors">
+               <Trash2 className="w-5 h-5"/>
+               <span className="text-sm font-medium">Vaciar Historial</span>
+             </button>
+
+             <button onClick={() => { if(confirm("¿Estás seguro? Esto destruirá la bóveda y reiniciará la app.")) executePanicWipe(); }} className="w-full p-4 bg-red-900/20 rounded-xl flex items-center gap-3 text-red-500 hover:bg-red-900/30 transition-colors">
+               <Skull className="w-5 h-5"/>
+               <span className="text-sm font-bold">DETONAR BÓVEDA</span>
+             </button>
+           </div>
+         </div>
+      </div>
+    );
+  }
+
+  // D. APP - CONTACTOS
   if (view === 'contacts') {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
@@ -349,24 +419,31 @@ const App = () => {
             {isConnected ? <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"/> : <div className="w-2 h-2 rounded-full bg-red-500" onClick={() => connectToRelay(vaultData.username)}/>}
             <span className="font-bold text-sm tracking-tight">{vaultData.username?.toUpperCase()}</span>
           </div>
-          <div className="flex gap-4"><Lock className="w-5 h-5 text-zinc-500 cursor-pointer" onClick={lockVault} /><Settings className="w-5 h-5 text-zinc-600 cursor-help" onClick={(e) => { e.stopPropagation(); alert("Triple toque para PÁNICO"); }}/></div>
+          <div className="flex gap-4">
+            <Lock className="w-5 h-5 text-zinc-500 cursor-pointer hover:text-white transition-colors" onClick={lockVault} />
+            <Settings className="w-5 h-5 text-zinc-500 cursor-pointer hover:text-white transition-colors" onClick={(e) => { e.stopPropagation(); setView('settings'); }}/>
+          </div>
         </header>
         <div className="p-4">
-          <div className="flex gap-2 mb-6"><input placeholder="ID Amigo..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={() => { if(newContactName && !vaultData.contacts.includes(newContactName.toLowerCase())) saveToVault({ contacts: [...vaultData.contacts, newContactName.toLowerCase()] }); setNewContactName(''); }} className="bg-blue-600 p-3 rounded-lg"><UserPlus className="w-5 h-5"/></button></div>
+          <div className="flex gap-2 mb-6"><input placeholder="ID Amigo..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={addContact} className="bg-blue-600 p-3 rounded-lg hover:bg-blue-500 transition-colors"><UserPlus className="w-5 h-5"/></button></div>
           <div className="space-y-2">
             {vaultData.contacts.map(c => (
-              <div key={c} onClick={() => { setActiveContact(c); setView('chat'); }} className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900">
+              <div key={c} onClick={() => { setActiveContact(c); setView('chat'); }} className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900 transition-colors">
                 <div className="flex items-center gap-3"><div className="w-10 h-10 bg-blue-900 rounded-full flex items-center justify-center font-bold text-sm uppercase">{c[0]}</div><div><h3 className="font-medium">{c}</h3></div></div><ChevronLeft className="rotate-180 w-5 h-5 text-zinc-600"/>
               </div>
             ))}
           </div>
         </div>
-        <div className="mt-auto p-6 text-center border-t border-zinc-900 bg-black"><button onClick={handlePanicTrigger} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto"><Skull className="w-3 h-3"/> DETONAR BÓVEDA</button></div>
+        <div className="mt-auto p-6 text-center border-t border-zinc-900 bg-black">
+            <button onClick={() => { if(confirm("¿Estás seguro? Esto destruirá todos los datos de inmediato.")) executePanicWipe(); }} className="text-red-900 text-[10px] font-bold border border-red-900/30 px-4 py-2 rounded flex items-center gap-2 mx-auto hover:bg-red-900/10 hover:text-red-500 transition-all">
+                <Skull className="w-3 h-3"/> DETONAR BÓVEDA
+            </button>
+        </div>
       </div>
     );
   }
 
-  // D. APP - CHAT
+  // E. APP - CHAT
   if (view === 'chat') {
     const msgs = vaultData.messages[activeContact] || [];
     const burnMode = vaultData.settings?.burnOnRead || false;
@@ -377,7 +454,7 @@ const App = () => {
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
           <div className="flex gap-3">
             <button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !burnMode } })} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
-            <button onClick={() => { if(confirm("¿Borrar?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
+            <button onClick={() => { if(confirm("¿Borrar chat?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
           </div>
         </header>
         
@@ -435,4 +512,3 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
-
