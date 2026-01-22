@@ -92,13 +92,14 @@ const App = () => {
     });
   }, []);
 
-  // Lógica BURN (Autodestrucción por tiempo)
+  // Lógica BURN (Autodestrucción por tiempo para TEXTO/FOTOS)
   useEffect(() => {
     let interval;
     if (view === 'chat' && activeContact && !isVaultLocked) {
       interval = setInterval(() => {
         const msgs = vaultData.messages[activeContact] || [];
         const now = Date.now();
+        // Borrar mensajes quemables ajenos que tengan más de 5s desde su recepción
         const toDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.id > 5000));
         
         if (toDelete.length > 0) {
@@ -148,13 +149,12 @@ const App = () => {
     setHasLocalVault(true);
   };
 
-  // --- NUEVA FUNCIÓN: BORRADO QUIRÚRGICO DE MENSAJE ---
+  // BORRADO LOCAL
   const removeMessage = (contact, msgId) => {
     const currentData = vaultDataRef.current;
     const currentMessages = currentData.messages[contact] || [];
     const newMessages = currentMessages.filter(m => m.id !== msgId);
     
-    // Guardar nuevo estado sin el mensaje
     saveToVault({ 
         messages: { 
             ...currentData.messages, 
@@ -214,13 +214,6 @@ const App = () => {
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
         
-        // --- LÓGICA DE BORRADO REMOTO (BURN-ACK) ---
-        if (data.contentType === 'burn_notification') {
-            const msgIdToDelete = Number(data.content);
-            removeMessage(sender, msgIdToDelete);
-            return; // No guardar el mensaje de sistema
-        }
-
         const currentData = vaultDataRef.current;
         let newContacts = [...currentData.contacts];
         if (!newContacts.includes(sender)) newContacts.push(sender);
@@ -236,18 +229,22 @@ const App = () => {
     } catch (e) {}
   };
 
+  // --- ENVÍO DE MENSAJES (MODIFICADO: AUDIO EFÍMERO) ---
   const sendMessage = (type = 'text', content = null) => {
     const payload = content || inputText;
     if (!payload || !activeContact) return;
     const target = activeContact.toLowerCase();
     const currentData = vaultDataRef.current;
     
-    const msgObj = {
-      id: Date.now(), type, content: payload, sender: currentData.username,
-      timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-      isMe: true, burn: currentData.settings.burnOnRead
-    };
-    saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
+    // Si NO es audio, lo guardamos localmente. Si ES audio, NO se guarda (Fire & Forget).
+    if (type !== 'audio') {
+        const msgObj = {
+          id: Date.now(), type, content: payload, sender: currentData.username,
+          timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+          isMe: true, burn: currentData.settings.burnOnRead
+        };
+        saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
+    }
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'PRIVATE_MSG', to: target, content: payload, contentType: type, burn: currentData.settings.burnOnRead }));
@@ -255,7 +252,7 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
-  // AUDIO REPARADO
+  // AUDIO
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -374,6 +371,7 @@ const App = () => {
     }
   };
 
+  // UI HELPERS
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
@@ -551,18 +549,8 @@ const App = () => {
                                 src={msg.content} 
                                 className="h-8 w-48"
                                 onEnded={() => {
-                                    if (!msg.isMe) {
-                                        removeMessage(activeContact, msg.id);
-                                        // Enviar ACK de borrado
-                                        if (socketRef.current?.readyState === WebSocket.OPEN) {
-                                            socketRef.current.send(JSON.stringify({
-                                                type: 'PRIVATE_MSG', 
-                                                to: activeContact, 
-                                                content: String(msg.id), 
-                                                contentType: 'burn_notification' 
-                                            }));
-                                        }
-                                    }
+                                    // Eliminación local en el receptor
+                                    removeMessage(activeContact, msg.id);
                                 }}
                             />
                         )}
@@ -623,4 +611,3 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
-
