@@ -14,7 +14,7 @@ console.error = (...args) => {
 
 // --- CONFIGURACIÓN ---
 const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
-const STORAGE_KEY = 'ghost_vault_v6'; // Nueva versión para asegurar limpieza
+const STORAGE_KEY = 'ghost_vault_v6';
 
 // --- CRYPTO ---
 const CryptoUtils = {
@@ -167,7 +167,21 @@ const App = () => {
   };
 
   const handleCalcClick = (val) => {
-    if (val === '=') { hasLocalVault ? attemptUnlock() : (()=>{ try { setCalcDisplay(String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))())); } catch { setCalcDisplay('Error'); } })(); return; }
+    if (val === '=') {
+      // CÓDIGO DE EMERGENCIA: 000000
+      if (calcDisplay === '000000') {
+        if (confirm("⚠️ ¿RESETEO DE FÁBRICA? \nSe perderán todos los datos y podrás crear un nuevo usuario.")) {
+          localStorage.removeItem(STORAGE_KEY);
+          setHasLocalVault(false);
+          setVaultData({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
+          setCalcDisplay('0');
+          return;
+        }
+      }
+      
+      hasLocalVault ? attemptUnlock() : (()=>{ try { setCalcDisplay(String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))())); } catch { setCalcDisplay('Error'); } })(); 
+      return; 
+    }
     if (val === 'AC') { setCalcDisplay('0'); return; }
     if (val === 'DEL') { setCalcDisplay(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); return; }
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
@@ -197,7 +211,7 @@ const App = () => {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans">
         <Shield className="w-16 h-16 text-blue-600 mb-6 animate-pulse"/>
-        <h1 className="text-2xl font-bold mb-2">Configuración Segura</h1>
+        <h1 className="text-2xl font-bold mb-2">Setup Seguro</h1>
         <div className="w-full max-w-sm space-y-4">
           <input placeholder="Usuario (Ej: agente01)" className="w-full bg-zinc-900 p-4 rounded-xl text-white outline-none" onChange={e => setSetupData({...setupData, username: e.target.value.toLowerCase()})} />
           <input placeholder="Ecuación (Clave)" className="w-full bg-zinc-900 p-4 rounded-xl text-white outline-none font-mono" onChange={e => setSetupData({...setupData, equation: e.target.value})} />
