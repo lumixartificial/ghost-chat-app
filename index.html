@@ -5,34 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Calculadora</title>
     
-    <!-- Enlace al Manifiesto Real -->
     <link rel="manifest" href="/manifest.json">
-    
-    <!-- Meta tags para iOS (Apple) -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Calculadora">
-    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2344/2344132.png">
+    <meta name="theme-color" content="#000000">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Prevenir scroll elástico y selección en móviles */
-        body { 
-            overscroll-behavior-y: none; 
-            -webkit-tap-highlight-color: transparent;
-        }
+        body { background-color: black; color: white; overscroll-behavior: none; }
     </style>
 </head>
-<body class="bg-black select-none touch-manipulation overscroll-none">
+<body>
     <div id="root"></div>
     <script type="module" src="/App.jsx"></script>
-    
-    <!-- Registro del Service Worker -->
     <script>
       if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js');
-        });
+        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
       }
     </script>
 </body>
