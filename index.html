@@ -2,12 +2,38 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Calculadora</title>
-    <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Calculator</title>
+    
+    <!-- Enlace al Manifiesto Real -->
+    <link rel="manifest" href="/manifest.json">
+    
+    <!-- Meta tags para iOS (Apple) -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Calculator">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2344/2344132.png">
+
+    <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-black">
+<body class="bg-black select-none touch-manipulation overscroll-none">
     <div id="root"></div>
     <script type="module" src="/App.jsx"></script>
+    
+    <!-- Registro del Service Worker (Protegido contra errores en editor) -->
+    <script>
+      // Solo intentamos registrar el SW si estamos en un entorno HTTP/HTTPS real
+      if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(registration => {
+              console.log('ServiceWorker registrado con éxito:', registration.scope);
+            })
+            .catch(error => {
+              console.log('Fallo al registrar ServiceWorker:', error);
+            });
+        });
+      }
+    </script>
 </body>
 </html>
