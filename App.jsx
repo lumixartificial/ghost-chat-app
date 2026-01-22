@@ -5,7 +5,7 @@ import {
   Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut
 } from 'lucide-react';
 
-// --- SILENCIADOR DE ADVERTENCIAS ---
+// --- 0. CORRECCIÓN DE ERRORES DE CONSOLA ---
 const originalError = console.error;
 console.error = (...args) => {
   if (args[0]?.includes?.('ReactDOM.render')) return;
@@ -13,10 +13,10 @@ console.error = (...args) => {
   originalError.call(console, ...args);
 };
 
-// --- CONFIGURACIÓN ---
+// --- 1. CONFIGURACIÓN ---
 const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
 
-// --- UTILIDADES CRIPTOGRÁFICAS (AES-GCM 256) ---
+// --- 2. UTILIDADES CRIPTOGRÁFICAS (AES-GCM 256) ---
 const CryptoUtils = {
   deriveKey: async (password, salt) => {
     const enc = new TextEncoder();
@@ -73,10 +73,20 @@ const CryptoUtils = {
 
 const App = () => {
   // --- Estados Principales ---
-  const [hasLocalVault, setHasLocalVault] = useState(() => !!localStorage.getItem('ghost_vault_v4'));
+  // Inicialización segura para evitar pantalla blanca por datos corruptos
+  const [hasLocalVault, setHasLocalVault] = useState(() => {
+    try {
+      return !!localStorage.getItem('ghost_vault_v4');
+    } catch {
+      localStorage.clear(); // Si falla, limpiamos para revivir la app
+      return false;
+    }
+  });
+
   const [isVaultLocked, setIsVaultLocked] = useState(true);
   const [view, setView] = useState('contacts'); 
   const [isLoading, setIsLoading] = useState(false);
+  const [stylesLoaded, setStylesLoaded] = useState(false);
   
   // Seguridad & Datos
   const [calcDisplay, setCalcDisplay] = useState('0');
@@ -95,22 +105,31 @@ const App = () => {
   const fileInputRef = useRef(null);
   const panicTimeoutRef = useRef(null);
 
-  // 0. AUTO-REPARACIÓN VISUAL (Fail-safe para Tailwind)
+  // --- 3. AUTO-REPARACIÓN VISUAL (CRÍTICO) ---
   useEffect(() => {
-    // Si el index.html falló en cargar Tailwind, lo forzamos desde aquí
-    const existingScript = document.querySelector('script[src*="tailwindcss"]');
-    if (!existingScript) {
-      const script = document.createElement('script');
-      script.src = "https://cdn.tailwindcss.com";
-      script.async = true;
-      document.head.appendChild(script);
-      
-      // Forzar fondo negro mientras carga para evitar flash blanco
-      document.body.style.backgroundColor = '#000000';
-    }
+    // Forzar fondo negro inmediatamente
+    document.body.style.backgroundColor = '#000000';
+    document.body.style.color = '#ffffff';
+    document.body.style.margin = '0';
+    document.body.style.fontFamily = 'monospace';
+
+    // Verificar si Tailwind cargó, si no, inyectarlo
+    const checkStyles = () => {
+      const isLoaded = window.getComputedStyle(document.body).getPropertyValue('--tw-text-opacity') !== '';
+      if (isLoaded) {
+        setStylesLoaded(true);
+      } else {
+        // Inyección de emergencia
+        const script = document.createElement('script');
+        script.src = "https://cdn.tailwindcss.com";
+        script.onload = () => setStylesLoaded(true);
+        document.head.appendChild(script);
+      }
+    };
+    checkStyles();
   }, []);
 
-  // 2. SISTEMA DE PÁNICO
+  // --- 4. SISTEMA DE PÁNICO ---
   const handlePanicTrigger = () => {
     setPanicCount(prev => prev + 1);
     if (panicTimeoutRef.current) clearTimeout(panicTimeoutRef.current);
@@ -126,7 +145,7 @@ const App = () => {
     window.location.href = "https://google.com";
   };
 
-  // 3. GESTIÓN DE BÓVEDA
+  // --- 5. GESTIÓN DE BÓVEDA ---
   const saveToVault = async (newData, overrideEquation = null) => {
     const keyToUse = overrideEquation || setupData.equation; 
     if (!keyToUse) return;
@@ -143,7 +162,6 @@ const App = () => {
     setIsLoading(true);
     const stored = localStorage.getItem('ghost_vault_v4');
     
-    // Descifrar con la ecuación en pantalla
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     
@@ -153,7 +171,6 @@ const App = () => {
       setIsVaultLocked(false);
       connectToRelay(decrypted.username);
     } else {
-      // Fallo: Simular calculadora
       try {
         const res = String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))());
         setCalcDisplay(res);
@@ -169,13 +186,12 @@ const App = () => {
     if (socketRef.current) socketRef.current.close();
   };
 
-  // 4. LÓGICA DE CALCULADORA
+  // --- 6. LÓGICA DE CALCULADORA ---
   const handleCalcClick = (val) => {
     if (val === '=') {
       if (hasLocalVault) {
         attemptUnlock(); 
       } else {
-        // Si no hay bóveda, funciona como calculadora normal
         try {
             const res = String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))());
             setCalcDisplay(res);
@@ -187,7 +203,7 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
-  // 5. RED
+  // --- 7. RED ---
   const connectToRelay = (user) => {
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
       socketRef.current = new WebSocket(RELAY_URL);
@@ -254,7 +270,7 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
-  // 6. OPCIONES
+  // --- 8. OPCIONES ---
   const addContact = () => {
     if (newContactName && !vaultData.contacts.includes(newContactName)) {
       saveToVault({ contacts: [...vaultData.contacts, newContactName] });
@@ -274,9 +290,21 @@ const App = () => {
     }
   };
 
-  // --- VISTAS ---
+  // --- 9. VISTAS (Con estilos de respaldo inline por si Tailwind falla) ---
+  
+  const containerStyle = { backgroundColor: 'black', minHeight: '100vh', color: 'white', display: 'flex', flexDirection: 'column' };
 
-  // A. SETUP INICIAL
+  // A. LOADING DE ESTILOS
+  if (!stylesLoaded) {
+    return (
+       <div style={{ ...containerStyle, alignItems: 'center', justifyContent: 'center' }}>
+          <RefreshCw className="animate-spin w-12 h-12 text-blue-500" />
+          <p style={{ marginTop: 20, fontFamily: 'monospace' }}>CARGANDO ENTORNO SEGURO...</p>
+       </div>
+    );
+  }
+
+  // B. SETUP INICIAL
   if (!hasLocalVault) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans">
@@ -306,14 +334,11 @@ const App = () => {
           <button 
             disabled={!setupData.username || !setupData.equation}
             onClick={() => {
-              // 1. Guardar la bóveda
               const initialVault = { ...vaultData, username: setupData.username };
               saveToVault(initialVault, setupData.equation);
-              
-              // 2. CORRECCIÓN: NO ENTRAR DIRECTO. IR A CALCULADORA.
               setCalcDisplay('0');
-              setIsVaultLocked(true); // Bloquear para obligar login
-              setSetupData({ username: '', equation: '' }); // Limpiar RAM temporal
+              setIsVaultLocked(true); 
+              setSetupData({ username: '', equation: '' }); 
               alert("Identidad protegida. Usa tu ecuación en la calculadora para entrar.");
             }}
             className="w-full bg-blue-600 py-4 rounded-xl font-bold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all mt-4 shadow-lg shadow-blue-900/20"
@@ -325,7 +350,7 @@ const App = () => {
     );
   }
 
-  // B. PANTALLA DE CARGA
+  // C. PANTALLA DE CARGA
   if (isLoading) {
     return (
       <div className="min-h-screen bg-black flex flex-col items-center justify-center text-blue-500 font-mono">
@@ -335,7 +360,7 @@ const App = () => {
     );
   }
 
-  // C. CALCULADORA (BLOQUEO)
+  // D. CALCULADORA (BLOQUEO)
   if (isVaultLocked) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4">
@@ -360,7 +385,7 @@ const App = () => {
     );
   }
 
-  // D. APLICACIÓN DESBLOQUEADA
+  // E. APLICACIÓN DESBLOQUEADA
 
   // Vista Contactos
   if (view === 'contacts') {
