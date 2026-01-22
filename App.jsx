@@ -92,7 +92,7 @@ const App = () => {
     });
   }, []);
 
-  // Lógica BURN
+  // Lógica BURN (Autodestrucción por tiempo)
   useEffect(() => {
     let interval;
     if (view === 'chat' && activeContact && !isVaultLocked) {
@@ -148,6 +148,21 @@ const App = () => {
     setHasLocalVault(true);
   };
 
+  // --- NUEVA FUNCIÓN: BORRADO QUIRÚRGICO DE MENSAJE ---
+  const removeMessage = (contact, msgId) => {
+    const currentData = vaultDataRef.current;
+    const currentMessages = currentData.messages[contact] || [];
+    const newMessages = currentMessages.filter(m => m.id !== msgId);
+    
+    // Guardar nuevo estado sin el mensaje
+    saveToVault({ 
+        messages: { 
+            ...currentData.messages, 
+            [contact]: newMessages 
+        } 
+    });
+  };
+
   const attemptUnlock = async () => {
     setIsLoading(true);
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -198,6 +213,14 @@ const App = () => {
       const data = JSON.parse(jsonStr);
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
+        
+        // --- LÓGICA DE BORRADO REMOTO (BURN-ACK) ---
+        if (data.contentType === 'burn_notification') {
+            const msgIdToDelete = Number(data.content);
+            removeMessage(sender, msgIdToDelete);
+            return; // No guardar el mensaje de sistema
+        }
+
         const currentData = vaultDataRef.current;
         let newContacts = [...currentData.contacts];
         if (!newContacts.includes(sender)) newContacts.push(sender);
@@ -232,16 +255,14 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
-  // --- AUDIO REPARADO (SISTEMA WHATSAPP: CLIC PARA GRABAR, CLIC PARA ENVIAR) ---
+  // AUDIO REPARADO
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
       let mimeType = "";
       if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mimeType = "audio/webm;codecs=opus";
       else if (MediaRecorder.isTypeSupported("audio/mp4")) mimeType = "audio/mp4";
       else if (MediaRecorder.isTypeSupported("audio/webm")) mimeType = "audio/webm";
-      
       const options = mimeType ? { mimeType } : undefined;
       
       try {
@@ -251,23 +272,18 @@ const App = () => {
       }
 
       audioChunksRef.current = [];
-
       mediaRecorderRef.current.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
       };
-
       mediaRecorderRef.current.onstop = () => {
         const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
         const reader = new FileReader();
         reader.readAsDataURL(blob);
         reader.onloadend = () => {
-            if(reader.result && blob.size > 0) {
-                sendMessage('audio', reader.result);
-            }
+            if(reader.result && blob.size > 0) sendMessage('audio', reader.result);
         };
         stream.getTracks().forEach(track => track.stop());
       };
-
       mediaRecorderRef.current.start();
       setIsRecording(true);
     } catch (e) {
@@ -285,7 +301,6 @@ const App = () => {
 
   const cancelRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        // Detener sin enviar (anulamos el onstop)
         mediaRecorderRef.current.onstop = null;
         mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
         setIsRecording(false);
@@ -305,15 +320,8 @@ const App = () => {
                 const MAX_SIZE = 800;
                 let width = img.width;
                 let height = img.height;
-
-                if (width > height) {
-                    if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
-                } else {
-                    if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
-                }
-
-                canvas.width = width;
-                canvas.height = height;
+                if (width > height) { if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; } } else { if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; } }
+                canvas.width = width; canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
                 resolve(canvas.toDataURL('image/jpeg', 0.7));
@@ -537,7 +545,27 @@ const App = () => {
                 ) : (
                     <>
                         {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
-                        {msg.type === 'audio' && <audio controls src={msg.content} className="h-8 w-48"/>}
+                        {msg.type === 'audio' && (
+                            <audio 
+                                controls 
+                                src={msg.content} 
+                                className="h-8 w-48"
+                                onEnded={() => {
+                                    if (!msg.isMe) {
+                                        removeMessage(activeContact, msg.id);
+                                        // Enviar ACK de borrado
+                                        if (socketRef.current?.readyState === WebSocket.OPEN) {
+                                            socketRef.current.send(JSON.stringify({
+                                                type: 'PRIVATE_MSG', 
+                                                to: activeContact, 
+                                                content: String(msg.id), 
+                                                contentType: 'burn_notification' 
+                                            }));
+                                        }
+                                    }
+                                }}
+                            />
+                        )}
                         {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
                     </>
                 )}
@@ -595,3 +623,4 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
