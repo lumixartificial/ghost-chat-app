@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, Eye
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -16,7 +16,7 @@ console.error = (...args) => {
   originalError.call(console, ...args);
 };
 
-// --- MOTOR CRIPTOGRÁFICO (AUDITADO: SEGURO) ---
+// --- MOTOR CRIPTOGRÁFICO ---
 const CryptoUtils = {
   deriveKey: async (password, salt) => {
     const enc = new TextEncoder();
@@ -54,11 +54,12 @@ const App = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(false);
-  const [isObscured, setIsObscured] = useState(false); // Estado para la cortina de privacidad
+  const [isObscured, setIsObscured] = useState(false);
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
-  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true } });
+  // Se agrega 'antiScreenshot' a los settings
+  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true, antiScreenshot: false } });
   
   // Refs
   const vaultDataRef = useRef(vaultData);
@@ -80,55 +81,59 @@ const App = () => {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
 
-  // --- 2. EFECTOS DE SEGURIDAD Y CONFIGURACIÓN ---
+  // --- 2. EFECTOS ---
 
-  // Sincronizar Ref con State
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // Configuración Inicial PWA y Protección de Pantalla
   useEffect(() => {
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
     
-    // Captura de instalación
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      setInstallPrompt(e);
-    });
+    // BLOQUEO DE EVENTOS DE CAPTURA/COPIA (GLOBAL)
+    const preventDefault = (e) => e.preventDefault();
+    document.addEventListener('contextmenu', preventDefault); // Bloquea clic derecho / pulsación larga
+    document.addEventListener('dragstart', preventDefault);   // Bloquea arrastrar imágenes
+    document.addEventListener('selectstart', preventDefault); // Bloquea seleccionar texto
 
-    // --- PROTECCIÓN ANTI-ESPÍA / SCREENSHOT / MIRRORING ---
+    // DETECCIÓN DE IMPR PANT (PC)
+    const handleKeyDown = (e) => {
+        if (e.key === 'PrintScreen') {
+            setIsObscured(true); // Pone la pantalla negra antes de que el SO capture
+            alert("Captura de pantalla detectada y bloqueada.");
+            setTimeout(() => setIsObscured(false), 1000);
+        }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    // ANTI-ESPÍA (VISIBILIDAD)
     const handleVisibilityChange = () => {
-      // Si la app pasa a segundo plano o el usuario cambia de pestaña, oscurecer inmediatamente
-      if (document.hidden) {
-        setIsObscured(true);
-      } else {
-        // Al volver, quitamos la cortina
-        setIsObscured(false);
-      }
+      if (document.hidden) setIsObscured(true);
+      else setIsObscured(false);
     };
-
-    const handleBlur = () => {
-      // Si se pierde el foco (ej: abrir panel de notificaciones o cambiar de app), oscurecer
-      setIsObscured(true);
-    };
-
-    const handleFocus = () => {
-      // Al recuperar el foco, mostrar contenido
-      setIsObscured(false);
-    };
+    const handleBlur = () => setIsObscured(true);
+    const handleFocus = () => setIsObscured(false);
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleBlur);
     window.addEventListener('focus', handleFocus);
+    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); setInstallPrompt(e); });
+
+    // ESTILOS INYECTADOS PARA BLOQUEO VISUAL
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+    document.body.style.webkitTouchCallout = 'none'; // iOS: Bloquea menú al mantener pulsado
 
     return () => {
+      document.removeEventListener('contextmenu', preventDefault);
+      document.removeEventListener('dragstart', preventDefault);
+      document.removeEventListener('selectstart', preventDefault);
+      window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('focus', handleFocus);
     };
   }, []);
 
-  // Lógica BURN (Autodestrucción)
   useEffect(() => {
     let interval;
     if (view === 'chat' && activeContact && !isVaultLocked) {
@@ -142,7 +147,6 @@ const App = () => {
            const newData = { ...vaultData };
            newData.messages[activeContact] = newMsgs;
            setVaultData(newData); 
-           // Guardado asíncrono
            saveToVault({ messages: { ...vaultData.messages, [activeContact]: newMsgs } });
         }
       }, 1000);
@@ -152,7 +156,6 @@ const App = () => {
 
   // --- 3. FUNCIONES LÓGICAS ---
 
-  // PÁNICO
   const handlePanicTrigger = () => {
     const now = Date.now();
     if (now - lastPanicTapRef.current < 500) {
@@ -174,7 +177,6 @@ const App = () => {
     window.location.href = "https://google.com";
   };
 
-  // BÓVEDA
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
@@ -191,10 +193,7 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
-      // Defaults para configuración
-      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true };
-      if (decrypted.settings.persistHistory === undefined) decrypted.settings.persistHistory = true;
-
+      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true, antiScreenshot: false };
       encryptionKeyRef.current = calcDisplay; 
       setVaultData(decrypted);
       setIsVaultLocked(false);
@@ -212,7 +211,6 @@ const App = () => {
             localStorage.setItem(STORAGE_KEY, encrypted);
         }
     }
-    
     setIsVaultLocked(true);
     setCalcDisplay('0');
     encryptionKeyRef.current = ''; 
@@ -221,7 +219,6 @@ const App = () => {
     setView('contacts'); 
   };
 
-  // RED
   const connectToRelay = (user) => {
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
       socketRef.current = new WebSocket(RELAY_URL);
@@ -273,7 +270,6 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
-  // AUDIO MEJORADO
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -310,7 +306,6 @@ const App = () => {
     }
   };
 
-  // IMAGEN
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -321,7 +316,6 @@ const App = () => {
     e.target.value = ''; 
   };
 
-  // CALCULADORA
   const handleCalcClick = (val) => {
     if (val === '=') { 
       if (calcDisplay === '000000') {
@@ -350,7 +344,6 @@ const App = () => {
     }
   };
 
-  // FUNCIONES DE UI
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
@@ -372,10 +365,8 @@ const App = () => {
 
   // --- 4. RENDERIZADO ---
 
-  // ** CORTINA DE PRIVACIDAD **
-  // Si la app está ofuscada (segundo plano/blur), mostramos una pantalla negra total.
   if (isObscured) {
-    return <div className="fixed inset-0 bg-black z-[100] flex items-center justify-center pointer-events-none"></div>;
+    return <div className="fixed inset-0 bg-black z-[100] flex items-center justify-center pointer-events-none text-zinc-900 font-mono text-[10px]">PROCESO SEGURO ACTIVO</div>;
   }
 
   // A. SETUP
@@ -444,19 +435,32 @@ const App = () => {
          <div className="p-4 space-y-6">
            <div>
              <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Privacidad</h3>
+             
+             {/* TOGGLE: Autodestrucción */}
              <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl mb-2">
                <div className="flex items-center gap-3"><div className="p-2 bg-red-900/20 rounded-lg text-red-500"><Flame className="w-5 h-5"/></div><div><p className="font-medium text-sm">Autodestrucción</p><p className="text-[10px] text-zinc-500">Borrar tras leer (5s)</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings?.burnOnRead } })} className="cursor-pointer">
                   {vaultData.settings?.burnOnRead ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
-             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
+
+             {/* TOGGLE: Persistencia */}
+             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl mb-2">
                <div className="flex items-center gap-3"><div className="p-2 bg-blue-900/20 rounded-lg text-blue-500"><Globe className="w-5 h-5"/></div><div><p className="font-medium text-sm">Persistencia</p><p className="text-[10px] text-zinc-500">Guardar chats</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, persistHistory: !vaultData.settings?.persistHistory } })} className="cursor-pointer">
                   {vaultData.settings?.persistHistory ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
+
+             {/* TOGGLE: Anti-Captura (Blur) */}
+             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
+               <div className="flex items-center gap-3"><div className="p-2 bg-purple-900/20 rounded-lg text-purple-500"><EyeOff className="w-5 h-5"/></div><div><p className="font-medium text-sm">Anti-Captura (Blur)</p><p className="text-[10px] text-zinc-500">Desenfocar chats</p></div></div>
+               <div onClick={() => saveToVault({ settings: { ...vaultData.settings, antiScreenshot: !vaultData.settings?.antiScreenshot } })} className="cursor-pointer">
+                  {vaultData.settings?.antiScreenshot ? <ToggleRight className="w-8 h-8 text-purple-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
+               </div>
+             </div>
            </div>
+
            <div>
              <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Zona de Peligro</h3>
              <button onClick={() => { if(confirm("¿Vaciar todo?")) saveToVault({ messages: {} }); }} className="w-full p-4 bg-zinc-900 rounded-xl flex items-center gap-3 text-red-400 hover:bg-red-900/10 mb-2 transition-colors"><Trash2 className="w-5 h-5"/><span className="text-sm font-medium">Vaciar Historial</span></button>
@@ -504,6 +508,7 @@ const App = () => {
   if (view === 'chat') {
     const msgs = vaultData.messages[activeContact] || [];
     const burnMode = vaultData.settings?.burnOnRead || false;
+    const blurMode = vaultData.settings?.antiScreenshot || false; // Nuevo estado de blur
 
     return (
       <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
@@ -518,16 +523,25 @@ const App = () => {
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => (
             <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}>
-                {msg.burn && !msg.isMe ? (
-                    <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción...</div>
-                ) : (
-                    <>
-                        {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
-                        {msg.type === 'audio' && <audio controls src={msg.content} className="h-8 w-48"/>}
-                        {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
-                    </>
-                )}
+              <div 
+                // Lógica de Blur: Si blurMode está activo Y no es mi mensaje (o si quiero blur en todo), aplicar clase
+                className={`max-w-[80%] p-3 rounded-xl relative group ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}
+                // Efecto "Tap to Reveal" usando CSS classes: blur por defecto, quitar blur en active/hover
+              >
+                <div className={`transition-all duration-200 ${blurMode ? 'blur-sm hover:blur-0 active:blur-0 select-none' : ''}`}>
+                    {msg.burn && !msg.isMe ? (
+                        <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción...</div>
+                    ) : (
+                        <>
+                            {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
+                            {msg.type === 'audio' && <audio controls src={msg.content} className="h-8 w-48"/>}
+                            {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
+                        </>
+                    )}
+                </div>
+                {/* Overlay de seguridad si está borroso */}
+                {blurMode && <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center opacity-20"><EyeOff className="w-4 h-4"/></div>}
+                
                 <span className="text-[9px] opacity-30 block text-right mt-1">{msg.timestamp}</span>
               </div>
             </div>
