@@ -1,21 +1,25 @@
 {
   "name": "Calculadora",
   "short_name": "Calculadora",
+  "id": "/",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
   "orientation": "portrait",
+  "categories": ["utilities", "productivity"],
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/2344/2344132.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "192x192",
+      "purpose": "any maskable"
     },
     {
       "src": "https://cdn-icons-png.flaticon.com/512/2344/2344132.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ]
 }
