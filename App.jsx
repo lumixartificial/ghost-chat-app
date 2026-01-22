@@ -95,6 +95,21 @@ const App = () => {
   const fileInputRef = useRef(null);
   const panicTimeoutRef = useRef(null);
 
+  // 0. AUTO-REPARACIÓN VISUAL (Fail-safe para Tailwind)
+  useEffect(() => {
+    // Si el index.html falló en cargar Tailwind, lo forzamos desde aquí
+    const existingScript = document.querySelector('script[src*="tailwindcss"]');
+    if (!existingScript) {
+      const script = document.createElement('script');
+      script.src = "https://cdn.tailwindcss.com";
+      script.async = true;
+      document.head.appendChild(script);
+      
+      // Forzar fondo negro mientras carga para evitar flash blanco
+      document.body.style.backgroundColor = '#000000';
+    }
+  }, []);
+
   // 2. SISTEMA DE PÁNICO
   const handlePanicTrigger = () => {
     setPanicCount(prev => prev + 1);
