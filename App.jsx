@@ -5,17 +5,17 @@ import {
   Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete
 } from 'lucide-react';
 
-// --- CONFIGURACIÓN ---
-const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
-
-// --- 0. FIX CONSOLA ---
+// --- FIX CONSOLA ---
 const originalError = console.error;
 console.error = (...args) => {
   if (args[0]?.includes?.('ReactDOM.render') || args[0]?.includes?.('createRoot')) return;
   originalError.call(console, ...args);
 };
 
-// --- 1. CRYPTO ENGINE ---
+// --- CONFIGURACIÓ ---
+const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
+
+// --- CRYPTO ---
 const CryptoUtils = {
   deriveKey: async (password, salt) => {
     const enc = new TextEncoder();
@@ -45,14 +45,12 @@ const CryptoUtils = {
 };
 
 const App = () => {
-  // --- ESTADOS ---
   const [hasLocalVault, setHasLocalVault] = useState(() => { try { return !!localStorage.getItem('ghost_vault_v4'); } catch { return false; }});
   const [isVaultLocked, setIsVaultLocked] = useState(true);
   const [view, setView] = useState('contacts'); 
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
-  const [isStandalone, setIsStandalone] = useState(false);
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
@@ -73,15 +71,15 @@ const App = () => {
 
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // --- LOGICA INSTALACIÓN ---
+  // Capturar esdeveniment d'instal·lació
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
+      console.log("Install prompt captured");
     });
   }, []);
 
-  // --- LOGICA PÁNICO ---
   const handlePanicTrigger = () => {
     setPanicCount(prev => prev + 1);
     if (panicTimeoutRef.current) clearTimeout(panicTimeoutRef.current);
@@ -91,7 +89,6 @@ const App = () => {
     }
   };
 
-  // --- LOGICA BÓVEDA ---
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
@@ -117,15 +114,6 @@ const App = () => {
     }
   };
 
-  const lockVault = () => {
-    setIsVaultLocked(true);
-    setCalcDisplay('0');
-    encryptionKeyRef.current = ''; 
-    if (socketRef.current) socketRef.current.close();
-    setIsConnected(false);
-  };
-
-  // --- RED ---
   const connectToRelay = (user) => {
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
       socketRef.current = new WebSocket(RELAY_URL);
@@ -174,7 +162,7 @@ const App = () => {
 
   const handleCalcClick = (val) => {
     if (val === '=') { hasLocalVault ? attemptUnlock() : (()=>{ try { setCalcDisplay(String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))())); } catch { setCalcDisplay('Error'); } })(); return; }
-    if (val === 'C') { setCalcDisplay('0'); return; }
+    if (val === 'AC') { setCalcDisplay('0'); return; }
     if (val === 'DEL') { setCalcDisplay(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); return; }
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
@@ -182,26 +170,28 @@ const App = () => {
   const installPWA = () => {
     if (installPrompt) {
       installPrompt.prompt();
-      installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
+      installPrompt.userChoice.then((choiceResult) => { 
+        if (choiceResult.outcome === 'accepted') setInstallPrompt(null); 
+      });
     } else {
-      alert("Para instalar:\nAndroid: Menú > Instalar aplicación\niOS: Compartir > Añadir a pantalla de inicio");
+      alert("Instal·lació manual:\nAndroid: Menú > Instal·lar aplicació\niOS: Compartir > Afegir a pantalla d'inici");
     }
   };
 
-  // --- VISTAS ---
+  // --- VISTES ---
   if (!hasLocalVault) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans">
         <Shield className="w-16 h-16 text-blue-600 mb-6 animate-pulse"/>
-        <h1 className="text-2xl font-bold mb-2">Setup Seguro</h1>
+        <h1 className="text-2xl font-bold mb-2">Setup Segur</h1>
         <div className="w-full max-w-sm space-y-4">
-          <input placeholder="Usuario (Ej: agente01)" className="w-full bg-zinc-900 p-4 rounded-xl text-white outline-none" onChange={e => setSetupData({...setupData, username: e.target.value.toLowerCase()})} />
-          <input placeholder="Ecuación (Clave)" className="w-full bg-zinc-900 p-4 rounded-xl text-white outline-none font-mono" onChange={e => setSetupData({...setupData, equation: e.target.value})} />
+          <input placeholder="Usuari" className="w-full bg-zinc-900 p-4 rounded-xl text-white outline-none" onChange={e => setSetupData({...setupData, username: e.target.value.toLowerCase()})} />
+          <input placeholder="Equació (Clau)" className="w-full bg-zinc-900 p-4 rounded-xl text-white outline-none font-mono" onChange={e => setSetupData({...setupData, equation: e.target.value})} />
           <button disabled={!setupData.username || !setupData.equation} onClick={() => {
               encryptionKeyRef.current = setupData.equation;
               saveToVault({ ...vaultData, username: setupData.username }, setupData.equation);
               setCalcDisplay('0'); setIsVaultLocked(true); setSetupData({ username: '', equation: '' });
-              alert("Bóveda creada. Usa la calculadora para entrar.");
+              alert("Bóveda creada. Usa la calculadora per entrar.");
             }} className="w-full bg-blue-600 py-4 rounded-xl font-bold mt-4 disabled:opacity-50">CREAR BÓVEDA</button>
         </div>
       </div>
@@ -209,55 +199,57 @@ const App = () => {
   }
 
   if (isVaultLocked || isLoading) {
-    // DISEÑO NATIVO ANDROID/GOOGLE CALCULATOR
+    // DISSENY ANDROID NATIU
+    // Colors Material Design: Dark (202124), LightGray (A5A5A5), DarkGray (303134), Blue (8AB4F8/669DF6)
     const calcBtns = [
-      { l: 'C', c: 'text-red-400 bg-zinc-900' }, 
-      { l: 'DEL', c: 'text-green-400 bg-zinc-900', icon: <Delete className="w-6 h-6"/> }, 
-      { l: '%', c: 'text-green-400 bg-zinc-900' }, 
-      { l: '÷', c: 'text-green-400 bg-zinc-900' },
+      { l: 'AC', c: 'bg-zinc-600 text-red-300' }, 
+      { l: 'DEL', c: 'bg-zinc-600 text-white', icon: <Delete className="w-6 h-6"/> }, 
+      { l: '%', c: 'bg-zinc-600 text-white' }, 
+      { l: '÷', c: 'bg-blue-600 text-white font-bold text-2xl' },
       
       { l: '7', c: 'bg-zinc-800 text-white' }, 
       { l: '8', c: 'bg-zinc-800 text-white' }, 
       { l: '9', c: 'bg-zinc-800 text-white' }, 
-      { l: '×', c: 'text-green-400 bg-zinc-900' },
+      { l: '×', c: 'bg-blue-600 text-white font-bold text-2xl' },
       
       { l: '4', c: 'bg-zinc-800 text-white' }, 
       { l: '5', c: 'bg-zinc-800 text-white' }, 
       { l: '6', c: 'bg-zinc-800 text-white' }, 
-      { l: '-', c: 'text-green-400 bg-zinc-900' },
+      { l: '-', c: 'bg-blue-600 text-white font-bold text-2xl' },
       
       { l: '1', c: 'bg-zinc-800 text-white' }, 
       { l: '2', c: 'bg-zinc-800 text-white' }, 
       { l: '3', c: 'bg-zinc-800 text-white' }, 
-      { l: '+', c: 'text-green-400 bg-zinc-900' },
+      { l: '+', c: 'bg-blue-600 text-white font-bold text-2xl' },
       
-      { l: '0', c: 'bg-zinc-800 text-white col-span-2 w-full rounded-full pl-8 justify-start' }, 
       { l: '.', c: 'bg-zinc-800 text-white' }, 
-      { l: '=', c: 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' }
+      { l: '0', c: 'bg-zinc-800 text-white' }, 
+      { l: '00', c: 'bg-zinc-800 text-white text-sm' }, 
+      { l: '=', c: 'bg-blue-400 text-black font-bold text-2xl' }
     ];
 
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col justify-end pb-8 px-4">
+      <div className="min-h-screen bg-black text-white flex flex-col justify-end pb-6 px-4 font-sans">
         {isLoading ? <div className="flex-1 flex items-center justify-center"><RefreshCw className="w-12 h-12 animate-spin text-blue-500"/></div> : (
           <>
-            <div className="flex-1 flex flex-col justify-end p-4 pb-8">
+            <div className="flex-1 flex flex-col justify-end p-4 pb-12">
               <div className="text-right text-7xl font-light tracking-tight overflow-hidden break-all leading-none">{calcDisplay}</div>
             </div>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-4 gap-4 mb-4">
               {calcBtns.map((btn, i) => (
                 <button 
                   key={i} 
                   onClick={() => handleCalcClick(btn.l)} 
-                  className={`h-20 w-20 rounded-full text-2xl font-medium flex items-center justify-center transition-all active:scale-95 ${btn.c || 'bg-zinc-800 text-white'} ${btn.l === '0' ? 'w-auto px-8 justify-start' : ''}`}
+                  className={`aspect-square rounded-full flex items-center justify-center text-2xl transition-all active:scale-90 ${btn.c}`}
                 >
                   {btn.icon || btn.l}
                 </button>
               ))}
             </div>
-            {/* Solo mostrar botón de instalación si NO está instalada */}
-            {(!isStandalone && installPrompt) && (
-              <div onClick={installPWA} className="mt-8 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-800 rounded-full py-2">
-                 ⬇ Instalar App
+            {/* Botó Instal·lar */}
+            {installPrompt && (
+              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse">
+                 Instal·lar Calculadora
               </div>
             )}
           </>
@@ -269,16 +261,16 @@ const App = () => {
   // --- APP DESBLOQUEADA ---
   if (view === 'contacts') {
     return (
-      <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
+      <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
         <header onClick={handlePanicTrigger} className="p-4 border-b border-zinc-900 bg-black flex justify-between items-center sticky top-0 z-20">
           <div className="flex items-center gap-2">
             {isConnected ? <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"/> : <div className="w-2 h-2 rounded-full bg-red-500" onClick={() => connectToRelay(vaultData.username)}/>}
             <span className="font-bold text-sm tracking-tight">{vaultData.username?.toUpperCase()}</span>
           </div>
-          <div className="flex gap-4"><Lock className="w-5 h-5 text-zinc-500 cursor-pointer" onClick={() => { setIsVaultLocked(true); setCalcDisplay('0'); encryptionKeyRef.current=''; if(socketRef.current) socketRef.current.close(); }} /><Settings className="w-5 h-5 text-zinc-600 cursor-help" onClick={(e) => { e.stopPropagation(); alert("Triple toque en barra superior = WIPE TOTAL"); }}/></div>
+          <div className="flex gap-4"><Lock className="w-5 h-5 text-zinc-500 cursor-pointer" onClick={() => { setIsVaultLocked(true); setCalcDisplay('0'); encryptionKeyRef.current=''; if(socketRef.current) socketRef.current.close(); }} /><Settings className="w-5 h-5 text-zinc-600"/></div>
         </header>
         <div className="p-4">
-          <div className="flex gap-2 mb-6"><input placeholder="ID Amigo..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={() => { if(newContactName && !vaultData.contacts.includes(newContactName.toLowerCase())) saveToVault({ contacts: [...vaultData.contacts, newContactName.toLowerCase()] }); setNewContactName(''); }} className="bg-blue-600 p-3 rounded-lg"><UserPlus className="w-5 h-5"/></button></div>
+          <div className="flex gap-2 mb-6"><input placeholder="ID Amic..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={() => { if(newContactName && !vaultData.contacts.includes(newContactName.toLowerCase())) saveToVault({ contacts: [...vaultData.contacts, newContactName.toLowerCase()] }); setNewContactName(''); }} className="bg-blue-600 p-3 rounded-lg"><UserPlus className="w-5 h-5"/></button></div>
           <div className="space-y-2">
             {vaultData.contacts.map(c => (
               <div key={c} onClick={() => { setActiveContact(c); setView('chat'); }} className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900">
@@ -307,16 +299,16 @@ const App = () => {
     }, [msgs, activeContact]);
 
     return (
-      <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
+      <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
-          <div className="flex gap-3"><button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } })} className={`p-2 rounded-full ${vaultData.settings.burnOnRead ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button><button onClick={() => { if(confirm("¿Borrar?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button></div>
+          <div className="flex gap-3"><button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } })} className={`p-2 rounded-full ${vaultData.settings.burnOnRead ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button><button onClick={() => { if(confirm("Esborrar?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button></div>
         </header>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => (
             <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}>
-                {msg.burn && !msg.isMe ? <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción... <span className="blur-sm hover:blur-0 cursor-pointer text-white">{msg.content}</span></div> : (msg.type === 'image' ? <img src={msg.content} className="rounded-lg max-h-48"/> : <p className="text-sm">{msg.content}</p>)}
+                {msg.burn && !msg.isMe ? <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucció... <span className="blur-sm hover:blur-0 cursor-pointer text-white">{msg.content}</span></div> : (msg.type === 'image' ? <img src={msg.content} className="rounded-lg max-h-48"/> : <p className="text-sm">{msg.content}</p>)}
               </div>
             </div>
           ))}
@@ -324,7 +316,7 @@ const App = () => {
         </div>
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
             <label className="p-3 text-zinc-500"><ImageIcon className="w-5 h-5"/><input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={e => { if(e.target.files[0]) { const r = new FileReader(); r.onload=()=>sendMessage('image', r.result); r.readAsDataURL(e.target.files[0]); } e.target.value=''; }}/></label>
-            <input className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" placeholder={vaultData.settings.burnOnRead ? "Autodestrucción..." : "Mensaje..."} value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && sendMessage('text')}/>
+            <input className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" placeholder={vaultData.settings.burnOnRead ? "Autodestrucció..." : "Missatge..."} value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && sendMessage('text')}/>
             <button onClick={() => sendMessage('text')} className="p-3 bg-blue-600 rounded-xl"><Send className="w-5 h-5"/></button>
         </div>
       </div>
