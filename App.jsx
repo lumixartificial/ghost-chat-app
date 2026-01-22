@@ -108,6 +108,7 @@ const App = () => {
            const newData = { ...vaultData };
            newData.messages[activeContact] = newMsgs;
            setVaultData(newData); 
+           // Guardado asíncrono para no bloquear UI
            saveToVault({ messages: { ...vaultData.messages, [activeContact]: newMsgs } });
         }
       }, 1000);
@@ -156,6 +157,7 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
+      // Defaults para configuración
       if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true };
       if (decrypted.settings.persistHistory === undefined) decrypted.settings.persistHistory = true;
 
@@ -169,6 +171,7 @@ const App = () => {
   };
 
   const lockVault = async () => {
+    // Si la persistencia está desactivada, limpiamos mensajes antes de cerrar
     if (vaultData.settings?.persistHistory === false) {
         const cleanData = { ...vaultData, messages: {} };
         if (encryptionKeyRef.current) {
@@ -182,7 +185,7 @@ const App = () => {
     encryptionKeyRef.current = ''; 
     if (socketRef.current) socketRef.current.close();
     setIsConnected(false);
-    setView('contacts'); 
+    setView('contacts'); // Reset view for next login
   };
 
   // RED
@@ -237,29 +240,56 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
-  // AUDIO
+  // AUDIO MEJORADO
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      // Usar MIME type compatible
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : ""; 
+      const options = mimeType ? { mimeType } : {};
+      
+      mediaRecorderRef.current = new MediaRecorder(stream, options);
       audioChunksRef.current = [];
-      mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
       mediaRecorderRef.current.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const finalMime = mediaRecorderRef.current.mimeType || "audio/webm";
+        const blob = new Blob(audioChunksRef.current, { type: finalMime });
+        
+        // Detener todos los tracks para apagar el micrófono
+        stream.getTracks().forEach(track => track.stop());
+
         const reader = new FileReader();
         reader.readAsDataURL(blob);
         reader.onloadend = () => sendMessage('audio', reader.result);
       };
+
       mediaRecorderRef.current.start();
       setIsRecording(true);
-    } catch (e) { alert("Micrófono bloqueado."); }
+    } catch (e) {
+      alert("Error: Micrófono bloqueado o no disponible.");
+    }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current) {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
+  };
+
+  // IMAGEN
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => sendMessage('image', reader.result);
+      reader.readAsDataURL(file);
+    }
+    e.target.value = ''; // Reset input
   };
 
   // CALCULADORA
@@ -475,8 +505,8 @@ const App = () => {
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
           <div className="flex gap-3">
-            <button onClick={toggleBurnMode} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
-            <button onClick={deleteChat} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
+            <button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !burnMode } })} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
+            <button onClick={() => { if(confirm("¿Borrar chat?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
           </div>
         </header>
         
@@ -501,7 +531,7 @@ const App = () => {
         </div>
 
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
-            <label className="p-3 text-zinc-500"><ImageIcon className="w-5 h-5"/><input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={e => { if(e.target.files[0]) { const r = new FileReader(); r.onload=()=>sendMessage('image', r.result); r.readAsDataURL(e.target.files[0]); } e.target.value=''; }}/></label>
+            <label className="p-3 text-zinc-500"><ImageIcon className="w-5 h-5"/><input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload}/></label>
             
             <input 
                 className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" 
@@ -534,3 +564,4 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
