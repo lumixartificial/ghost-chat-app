@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download
 } from 'lucide-react';
 
 // --- 0. CORRECCIÓN DE ERRORES DE CONSOLA ---
@@ -71,6 +71,9 @@ const CryptoUtils = {
   }
 };
 
+// --- ICONO DE CALCULADORA (SVG BASE64) ---
+const CALC_ICON = `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiI+PHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIGZpbGw9IiMzMzMiIHJ4PSIxMDAiLz48cmVjdCB4PSI1NiIgeT0iNTYiIHdpZHRoPSI0MDAiIGhlaWdodD0iMTIwIiBmaWxsPSIjYWFhIiByeD0iMjAiLz48Y2lyY2xlIGN4PSIxMTYiIGN5PSIyNTYiIHI9IjQwIiBmaWxsPSIjNjY2Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMzk2IiBjeT0iMjU2IiByPSI0MCIgZmlsbD0iI2ZmOTUwMCIvPjxjaXJNsZSBjeD0iMTE2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMjU2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMzk2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iI2ZmOTUwMCIvPjwvc3ZnPg==`;
+
 const App = () => {
   // --- Estados Principales ---
   const [hasLocalVault, setHasLocalVault] = useState(() => {
@@ -82,11 +85,10 @@ const App = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [stylesLoaded, setStylesLoaded] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
   
   // Seguridad & Datos
   const [calcDisplay, setCalcDisplay] = useState('0');
-  
-  // FIX: Restaurar setupData que faltaba y causaba el ReferenceError
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
   
   const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
@@ -98,7 +100,7 @@ const App = () => {
   const [inputText, setInputText] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [panicCount, setPanicCount] = useState(0);
-  const [networkLogs, setNetworkLogs] = useState([]); // Restaurar logs
+  const [networkLogs, setNetworkLogs] = useState([]);
 
   // Refs DOM
   const socketRef = useRef(null);
@@ -116,8 +118,9 @@ const App = () => {
     setNetworkLogs(prev => [{id: Date.now(), time: new Date().toLocaleTimeString(), action}, ...prev].slice(0, 20));
   };
 
-  // --- 3. AUTO-REPARACIÓN VISUAL ---
+  // --- AUTO-CONFIGURACIÓN PWA Y ESTILOS ---
   useEffect(() => {
+    // 1. Estilos Tailwind
     document.body.style.backgroundColor = '#000000';
     document.body.style.color = '#ffffff';
     document.body.style.margin = '0';
@@ -135,9 +138,45 @@ const App = () => {
       }
     };
     checkStyles();
+
+    // 2. Inyección de Manifest PWA (Camuflaje Calculadora)
+    const manifest = {
+      name: "Calculator",
+      short_name: "Calc",
+      start_url: ".",
+      display: "standalone",
+      background_color: "#000000",
+      theme_color: "#000000",
+      icons: [{ src: CALC_ICON, sizes: "512x512", type: "image/svg+xml" }]
+    };
+    
+    const stringManifest = JSON.stringify(manifest);
+    const blob = new Blob([stringManifest], {type: 'application/json'});
+    const manifestURL = URL.createObjectURL(blob);
+    
+    let link = document.querySelector('link[rel="manifest"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'manifest';
+      document.head.appendChild(link);
+    }
+    link.href = manifestURL;
+
+    // Meta tags para iOS
+    const metaApple = document.createElement('meta');
+    metaApple.name = "apple-mobile-web-app-capable";
+    metaApple.content = "yes";
+    document.head.appendChild(metaApple);
+
+    // 3. Capturar evento de instalación
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    });
+
   }, []);
 
-  // --- 4. SISTEMA DE PÁNICO ---
+  // --- SISTEMA DE PÁNICO ---
   const handlePanicTrigger = () => {
     setPanicCount(prev => prev + 1);
     if (panicTimeoutRef.current) clearTimeout(panicTimeoutRef.current);
@@ -153,7 +192,7 @@ const App = () => {
     window.location.href = "https://google.com";
   };
 
-  // --- 5. GESTIÓN DE BÓVEDA ---
+  // --- GESTIÓN DE BÓVEDA ---
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
@@ -197,7 +236,7 @@ const App = () => {
     setIsConnected(false);
   };
 
-  // --- 6. LÓGICA DE CALCULADORA ---
+  // --- LÓGICA DE CALCULADORA ---
   const handleCalcClick = (val) => {
     if (val === '=') {
       if (hasLocalVault) {
@@ -214,7 +253,7 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
-  // --- 7. RED ---
+  // --- RED ---
   const connectToRelay = (user) => {
     addLog(`Conectando al nodo como ${user}...`);
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
@@ -227,7 +266,6 @@ const App = () => {
       };
       
       socketRef.current.onmessage = (e) => handleIncoming(e.data);
-      
       socketRef.current.onclose = () => { setIsConnected(false); addLog("Desconectado."); };
       socketRef.current.onerror = () => { setIsConnected(false); addLog("Error de conexión."); };
     }
@@ -238,14 +276,10 @@ const App = () => {
       const data = JSON.parse(jsonStr);
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
-        
         const currentData = vaultDataRef.current;
         let newContacts = [...currentData.contacts];
         
-        if (!newContacts.includes(sender)) {
-          newContacts.push(sender);
-          addLog(`Nuevo contacto detectado: ${sender}`);
-        }
+        if (!newContacts.includes(sender)) newContacts.push(sender);
 
         const msgObj = {
           id: Date.now(),
@@ -254,7 +288,8 @@ const App = () => {
           sender: sender,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
           isMe: false,
-          read: false
+          read: false,
+          burn: data.burn // FIX: Leer flag de quemado del servidor
         };
 
         const newMessages = {
@@ -273,6 +308,7 @@ const App = () => {
 
     const target = activeContact.toLowerCase();
     const currentData = vaultDataRef.current;
+    const isBurn = currentData.settings.burnOnRead;
 
     const msgObj = {
       id: Date.now(),
@@ -281,7 +317,7 @@ const App = () => {
       sender: currentData.username,
       timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
       isMe: true,
-      burn: currentData.settings.burnOnRead
+      burn: isBurn
     };
 
     const newMessages = {
@@ -291,16 +327,34 @@ const App = () => {
     
     saveToVault({ messages: newMessages });
 
+    // FIX: Enviar flag 'burn' al servidor
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
-        type: 'PRIVATE_MSG', to: target, content: payload, contentType: type
+        type: 'PRIVATE_MSG', 
+        to: target, 
+        content: payload, 
+        contentType: type,
+        burn: isBurn 
       }));
     }
     
     if (type === 'text') setInputText('');
   };
 
-  // --- 8. OPCIONES ---
+  // --- LÓGICA DE BORRADO AUTOMÁTICO (BURN) ---
+  const deleteMessage = (contact, msgId) => {
+    const currentMessages = vaultDataRef.current.messages[contact] || [];
+    const newMessagesList = currentMessages.filter(m => m.id !== msgId);
+    
+    const newAllMessages = {
+      ...vaultDataRef.current.messages,
+      [contact]: newMessagesList
+    };
+    
+    saveToVault({ messages: newAllMessages });
+  };
+
+  // --- OPCIONES ---
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
@@ -319,14 +373,25 @@ const App = () => {
   };
 
   const deleteChat = () => {
-    if(confirm("¿Eliminar historial con " + activeContact + "?")) {
+    if(confirm("¿Eliminar historial?")) {
       const newMessages = { ...vaultData.messages };
       delete newMessages[activeContact];
       saveToVault({ messages: newMessages });
     }
   };
 
-  // --- 9. VISTAS ---
+  const installPWA = () => {
+    if (installPrompt) {
+      installPrompt.prompt();
+      installPrompt.userChoice.then((choiceResult) => {
+        if (choiceResult.outcome === 'accepted') setInstallPrompt(null);
+      });
+    } else {
+      alert("Para instalar: Pulsa 'Compartir' > 'Añadir a pantalla de inicio' en tu navegador.");
+    }
+  };
+
+  // --- VISTAS ---
   
   const containerStyle = { backgroundColor: 'black', minHeight: '100vh', color: 'white', display: 'flex', flexDirection: 'column' };
 
@@ -410,6 +475,10 @@ const App = () => {
               <Lock className="w-3 h-3 text-zinc-600"/>
               <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-widest">AES-256 Encrypted</span>
             </div>
+            {/* Botón discreto de instalación en pantalla de bloqueo */}
+            <div onClick={installPWA} className="mt-4 text-[9px] text-zinc-800 text-center cursor-pointer hover:text-zinc-600">
+               v4.6.2 SECURE
+            </div>
         </div>
       </div>
     );
@@ -421,10 +490,7 @@ const App = () => {
   if (view === 'contacts') {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
-        <header 
-          onClick={handlePanicTrigger} 
-          className="p-4 border-b border-zinc-900 bg-black flex justify-between items-center select-none sticky top-0 z-20"
-        >
+        <header onClick={handlePanicTrigger} className="p-4 border-b border-zinc-900 bg-black flex justify-between items-center select-none sticky top-0 z-20">
           <div className="flex items-center gap-2">
             {isConnected ? (
               <div className="flex items-center gap-1.5 bg-green-900/30 px-2 py-1 rounded-full border border-green-900/50">
@@ -440,6 +506,7 @@ const App = () => {
             <span className="font-bold text-sm tracking-tight ml-2">{vaultData.username?.toUpperCase()}</span>
           </div>
           <div className="flex gap-4">
+            {installPrompt && <Download className="w-5 h-5 text-blue-500 animate-bounce cursor-pointer" onClick={installPWA} />}
             <Lock className="w-5 h-5 text-zinc-500 hover:text-white cursor-pointer" onClick={lockVault} />
             <Settings className="w-5 h-5 text-zinc-600 cursor-help" onClick={(e) => { e.stopPropagation(); alert("Triple toque en barra superior = WIPE TOTAL"); }}/>
           </div>
@@ -448,7 +515,7 @@ const App = () => {
         <div className="p-4">
           <div className="flex gap-2 mb-6">
             <input 
-              placeholder="ID de amigo (Ej: agente02)" 
+              placeholder="ID de amigo..." 
               className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none border border-transparent focus:border-blue-900 transition-colors"
               value={newContactName} onChange={e => setNewContactName(e.target.value)}
             />
@@ -480,7 +547,6 @@ const App = () => {
           </div>
         </div>
 
-        {/* Logs visuales (debug) */}
         <div className="mt-auto border-t border-zinc-900 bg-black">
             <div className="h-24 overflow-y-auto p-4 text-[9px] font-mono text-zinc-600">
                 {networkLogs.map(log => <div key={log.id}>[{log.time}] {log.action}</div>)}
@@ -495,9 +561,25 @@ const App = () => {
     );
   }
 
-  // Vista Chat
+  // Vista Chat (Con lógica BURN)
   if (view === 'chat') {
     const msgs = vaultData.messages[activeContact] || [];
+    
+    // --- LÓGICA BURN (Autodestrucción visual) ---
+    // Detectamos mensajes quemables y renderizamos temporizadores si es necesario
+    // Para simplificar, usamos un efecto que revisa cada segundo y borra los expirados
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            const msgsToDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.receivedAt > 5000));
+            
+            if (msgsToDelete.length > 0) {
+                msgsToDelete.forEach(m => deleteMessage(activeContact, m.id));
+            }
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [msgs, activeContact]);
+
     return (
       <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900">
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10 select-none">
@@ -524,11 +606,21 @@ const App = () => {
           {msgs.map((msg, i) => (
             <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}>
-                {msg.type === 'image' ? (
-                  <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>
+                {/* Contenido protegido por BURN */}
+                {msg.burn && !msg.isMe ? (
+                    <div className="flex items-center gap-2 text-red-400 animate-pulse">
+                        <Flame className="w-4 h-4"/>
+                        <span className="text-xs font-bold">Autodestrucción en 5s...</span>
+                        <p className="text-sm text-white">{msg.content}</p>
+                    </div>
                 ) : (
-                  <p className="text-sm leading-relaxed">{msg.content}</p>
+                    msg.type === 'image' ? (
+                        <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>
+                    ) : (
+                        <p className="text-sm leading-relaxed">{msg.content}</p>
+                    )
                 )}
+                
                 <div className="flex justify-end items-center gap-1 mt-1 opacity-50">
                     {msg.burn && <Flame className="w-3 h-3 text-red-500"/>}
                     <span className="text-[9px]">{msg.timestamp}</span>
