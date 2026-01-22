@@ -1,14 +1,24 @@
-self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open('calc-secure-v1').then((cache) => cache.addAll([
-      '/',
-      '/index.html',
-    ])),
+const CACHE_NAME = 'calc-native-v2';
+
+// Instal·lació immediata
+self.addEventListener('install', (event) => {
+  self.skipWaiting(); // Força l'activació sense esperar
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.add('/');
+    })
   );
 });
 
-self.addEventListener('fetch', (e) => {
-  e.respondWith(
-    caches.match(e.request).then((response) => response || fetch(e.request)),
+// Prendre el control immediatament
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+// Estratègia de xarxa primer, després caché (per a actualitzacions ràpides)
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    fetch(event.request)
+      .catch(() => caches.match(event.request))
   );
 });
