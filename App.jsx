@@ -108,7 +108,6 @@ const App = () => {
            const newData = { ...vaultData };
            newData.messages[activeContact] = newMsgs;
            setVaultData(newData); 
-           // Guardado asíncrono para no bloquear UI
            saveToVault({ messages: { ...vaultData.messages, [activeContact]: newMsgs } });
         }
       }, 1000);
@@ -157,7 +156,6 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
-      // Defaults para configuración
       if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true };
       if (decrypted.settings.persistHistory === undefined) decrypted.settings.persistHistory = true;
 
@@ -171,7 +169,6 @@ const App = () => {
   };
 
   const lockVault = async () => {
-    // Si la persistencia está desactivada, limpiamos mensajes antes de cerrar
     if (vaultData.settings?.persistHistory === false) {
         const cleanData = { ...vaultData, messages: {} };
         if (encryptionKeyRef.current) {
@@ -185,7 +182,7 @@ const App = () => {
     encryptionKeyRef.current = ''; 
     if (socketRef.current) socketRef.current.close();
     setIsConnected(false);
-    setView('contacts'); // Reset view for next login
+    setView('contacts'); 
   };
 
   // RED
@@ -291,6 +288,31 @@ const App = () => {
       installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
     } else {
       alert("Para instalar: \nAndroid: Menú > Instalar aplicación\niOS: Compartir > Añadir a pantalla de inicio");
+    }
+  };
+
+  // --- FUNCIONES QUE FALTABAN ---
+  const addContact = () => {
+    if (newContactName) {
+      const normalizedName = newContactName.trim().toLowerCase();
+      const currentContacts = vaultDataRef.current.contacts;
+      
+      if (!currentContacts.includes(normalizedName) && normalizedName !== vaultDataRef.current.username) {
+        saveToVault({ contacts: [...currentContacts, normalizedName] });
+      }
+      setNewContactName('');
+    }
+  };
+
+  const toggleBurnMode = () => {
+    saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } });
+  };
+
+  const deleteChat = () => {
+    if(confirm("¿Eliminar historial con " + activeContact + "?")) {
+      const newMessages = { ...vaultData.messages };
+      delete newMessages[activeContact];
+      saveToVault({ messages: newMessages });
     }
   };
 
@@ -453,8 +475,8 @@ const App = () => {
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
           <div className="flex gap-3">
-            <button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !burnMode } })} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
-            <button onClick={() => { if(confirm("¿Borrar chat?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
+            <button onClick={toggleBurnMode} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
+            <button onClick={deleteChat} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
           </div>
         </header>
         
