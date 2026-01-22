@@ -86,6 +86,7 @@ const App = () => {
   const [stylesLoaded, setStylesLoaded] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(false);
   
   // Seguridad & Datos
   const [calcDisplay, setCalcDisplay] = useState('0');
@@ -139,19 +140,27 @@ const App = () => {
     };
     checkStyles();
 
-    // 2. Inyección de Manifest PWA (Camuflaje Calculadora)
+    // 2. Detectar si ya está instalada (Standalone)
+    const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    setIsStandalone(isInStandaloneMode);
+
+    // 3. Inyección de Manifest PWA (Camuflaje Calculadora)
     const manifest = {
       name: "Calculator",
       short_name: "Calc",
-      start_url: ".",
+      start_url: window.location.href,
       display: "standalone",
       background_color: "#000000",
       theme_color: "#000000",
-      icons: [{ src: CALC_ICON, sizes: "512x512", type: "image/svg+xml" }]
+      orientation: "portrait",
+      icons: [
+        { src: CALC_ICON, sizes: "192x192", type: "image/svg+xml", purpose: "any maskable" },
+        { src: CALC_ICON, sizes: "512x512", type: "image/svg+xml", purpose: "any maskable" }
+      ]
     };
     
     const stringManifest = JSON.stringify(manifest);
-    const blob = new Blob([stringManifest], {type: 'application/json'});
+    const blob = new Blob([stringManifest], {type: 'application/manifest+json'});
     const manifestURL = URL.createObjectURL(blob);
     
     let link = document.querySelector('link[rel="manifest"]');
@@ -168,7 +177,16 @@ const App = () => {
     metaApple.content = "yes";
     document.head.appendChild(metaApple);
 
-    // 3. Capturar evento de instalación
+    // 4. Intentar Inyección de Service Worker (Truco para activar PWA en algunos navegadores)
+    if ('serviceWorker' in navigator) {
+        // Un SW vacío que hace passthrough, suficiente para cumplir el requisito de "offline" a veces
+        const swCode = `self.addEventListener('fetch', () => {});`;
+        const swBlob = new Blob([swCode], {type: 'text/javascript'});
+        const swUrl = URL.createObjectURL(swBlob);
+        navigator.serviceWorker.register(swUrl).catch(() => {});
+    }
+
+    // 5. Capturar evento de instalación
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
@@ -387,7 +405,13 @@ const App = () => {
         if (choiceResult.outcome === 'accepted') setInstallPrompt(null);
       });
     } else {
-      alert("Para instalar: Pulsa 'Compartir' > 'Añadir a pantalla de inicio' en tu navegador.");
+      // Instrucciones manuales si el automático no está disponible
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      if (isIOS) {
+        alert("Para instalar en iPhone:\n1. Toca el botón 'Compartir' (cuadrado con flecha)\n2. Baja y toca 'Añadir a pantalla de inicio'");
+      } else {
+        alert("Para instalar:\n1. Abre el menú del navegador (3 puntos)\n2. Toca 'Instalar aplicación' o 'Añadir a pantalla de inicio'");
+      }
     }
   };
 
@@ -411,7 +435,7 @@ const App = () => {
         <Shield className="w-16 h-16 text-blue-600 mb-6 animate-pulse"/>
         <h1 className="text-2xl font-bold mb-2 tracking-tight">Cifrado Grado Militar</h1>
         <p className="text-zinc-500 text-center mb-8 text-sm max-w-xs">
-          Configura tu identidad. Datos locales cifrados con AES-GCM.
+          Configura tu identidad segura. Datos locales cifrados con AES-GCM.
         </p>
         
         <div className="w-full max-w-sm space-y-4">
@@ -475,10 +499,13 @@ const App = () => {
               <Lock className="w-3 h-3 text-zinc-600"/>
               <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-widest">AES-256 Encrypted</span>
             </div>
-            {/* Botón discreto de instalación en pantalla de bloqueo */}
-            <div onClick={installPWA} className="mt-4 text-[9px] text-zinc-800 text-center cursor-pointer hover:text-zinc-600">
-               v4.6.2 SECURE
-            </div>
+            {/* Botón de instalación VISIBLE Y CLARO */}
+            {!isStandalone && (
+              <div onClick={installPWA} className="mt-6 flex items-center justify-center gap-2 bg-zinc-900 border border-zinc-800 py-3 px-4 rounded-xl cursor-pointer hover:bg-zinc-800 transition-colors animate-pulse">
+                 <Download className="w-4 h-4 text-green-500"/>
+                 <span className="text-[10px] font-bold text-zinc-300 uppercase">Instalar App Calculadora</span>
+              </div>
+            )}
         </div>
       </div>
     );
@@ -506,7 +533,6 @@ const App = () => {
             <span className="font-bold text-sm tracking-tight ml-2">{vaultData.username?.toUpperCase()}</span>
           </div>
           <div className="flex gap-4">
-            {installPrompt && <Download className="w-5 h-5 text-blue-500 animate-bounce cursor-pointer" onClick={installPWA} />}
             <Lock className="w-5 h-5 text-zinc-500 hover:text-white cursor-pointer" onClick={lockVault} />
             <Settings className="w-5 h-5 text-zinc-600 cursor-help" onClick={(e) => { e.stopPropagation(); alert("Triple toque en barra superior = WIPE TOTAL"); }}/>
           </div>
@@ -565,13 +591,12 @@ const App = () => {
   if (view === 'chat') {
     const msgs = vaultData.messages[activeContact] || [];
     
-    // --- LÓGICA BURN (Autodestrucción visual) ---
-    // Detectamos mensajes quemables y renderizamos temporizadores si es necesario
-    // Para simplificar, usamos un efecto que revisa cada segundo y borra los expirados
+    // --- LÓGICA BURN ---
     useEffect(() => {
         const interval = setInterval(() => {
             const now = Date.now();
-            const msgsToDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.receivedAt > 5000));
+            // Borrar si pasaron 5s desde la recepción
+            const msgsToDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.id > 5000)); // Usamos ID (timestamp) como base
             
             if (msgsToDelete.length > 0) {
                 msgsToDelete.forEach(m => deleteMessage(activeContact, m.id));
@@ -611,7 +636,7 @@ const App = () => {
                     <div className="flex items-center gap-2 text-red-400 animate-pulse">
                         <Flame className="w-4 h-4"/>
                         <span className="text-xs font-bold">Autodestrucción en 5s...</span>
-                        <p className="text-sm text-white">{msg.content}</p>
+                        <p className="text-sm text-white blur-sm hover:blur-0 transition-all">{msg.content}</p>
                     </div>
                 ) : (
                     msg.type === 'image' ? (
