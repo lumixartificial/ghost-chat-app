@@ -85,7 +85,6 @@ const App = () => {
 
   // --- 2. EFECTOS ---
 
-  // Sincronizar Ref con State (Backup)
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
   useEffect(() => {
@@ -109,7 +108,9 @@ const App = () => {
             const msgs = vaultDataRef.current.messages[activeContact] || [];
             
             // Borrar si: tiene burn activado, ya fue leído, y pasaron 10s desde la lectura
+            // EXCEPCIÓN: Los audios se borran por evento onEnded, no por tiempo aquí (salvo limpieza general)
             const toDelete = msgs.filter(m => 
+                m.type !== 'audio' && 
                 m.burn && 
                 m.readAt && 
                 (now - m.readAt > 10000)
@@ -117,11 +118,9 @@ const App = () => {
             
             if (toDelete.length > 0) {
                const newMsgs = msgs.filter(m => !toDelete.includes(m));
-               // Guardar usando el ref para evitar race conditions
                const newData = { ...vaultDataRef.current };
                newData.messages[activeContact] = newMsgs;
                
-               // Actualizar estado y disco inmediatamente
                setVaultData(newData); 
                saveToVault({ messages: { ...vaultDataRef.current.messages, [activeContact]: newMsgs } });
             }
@@ -158,27 +157,24 @@ const App = () => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
     
-    // Mezclar con el REF para asegurar que tenemos lo último
     const updatedVault = { ...vaultDataRef.current, ...newData };
     
     setVaultData(updatedVault);
-    vaultDataRef.current = updatedVault; // Actualizar ref manualmente por seguridad
+    vaultDataRef.current = updatedVault; 
     
     const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem(STORAGE_KEY, encrypted);
     setHasLocalVault(true);
   };
 
-  // NUEVO: Marcar mensaje como leído (Desenfocar)
   const handleReadMessage = (contact, msgId) => {
     const msgs = vaultDataRef.current.messages[contact] || [];
     const msgIndex = msgs.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
 
-    // Si ya fue leído, no hacemos nada
     if (msgs[msgIndex].readAt) return;
 
-    const newMsg = { ...msgs[msgIndex], readAt: Date.now() }; // Inicia contador ahora
+    const newMsg = { ...msgs[msgIndex], readAt: Date.now() }; 
     const newMsgs = [...msgs];
     newMsgs[msgIndex] = newMsg;
 
@@ -247,12 +243,11 @@ const App = () => {
       const data = JSON.parse(jsonStr);
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
-        const currentData = vaultDataRef.current;
         
+        const currentData = vaultDataRef.current;
         let newContacts = [...currentData.contacts];
         if (!newContacts.includes(sender)) newContacts.push(sender);
         
-        // Si YO tengo activada la autodestrucción, fuerzo el flag burn en lo que recibo
         const shouldBurn = data.burn || currentData.settings.burnOnRead;
 
         const msgObj = {
@@ -262,7 +257,7 @@ const App = () => {
           isMe: false, 
           read: false, 
           burn: shouldBurn,
-          readAt: null // Inicialmente borroso
+          readAt: null 
         };
         saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
       }
@@ -275,14 +270,13 @@ const App = () => {
     const target = activeContact.toLowerCase();
     const currentData = vaultDataRef.current;
     
-    // Si NO es audio, lo guardamos localmente.
     if (type !== 'audio') {
         const msgObj = {
           id: Date.now(), type, content: payload, sender: currentData.username,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
           isMe: true, 
           burn: currentData.settings.burnOnRead, 
-          readAt: Date.now() // Mis mensajes nacen leídos
+          readAt: Date.now() 
         };
         saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
     } else {
@@ -589,24 +583,24 @@ const App = () => {
           {msgs.map((msg, i) => {
              // Calculamos el tiempo restante para el burn
              const secondsLeft = msg.burn && msg.readAt ? Math.max(0, Math.ceil(10 - (currentTime - msg.readAt) / 1000)) : null;
+             // Lógica de Blur: NO aplicar a audios
+             const isBlurry = !msg.isMe && !msg.readAt && msg.type !== 'audio';
 
              return (
               <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
                 <div 
-                  onClick={() => !msg.isMe && !msg.readAt && handleReadMessage(activeContact, msg.id)}
-                  className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'} relative cursor-pointer`}
+                  onClick={() => isBlurry && handleReadMessage(activeContact, msg.id)}
+                  className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'} relative ${isBlurry ? 'cursor-pointer' : ''}`}
                 >
-                  {/* Lógica Blur / Tap to Read */}
-                  <div className={`transition-all duration-300 ${!msg.isMe && !msg.readAt ? 'blur-md select-none' : ''}`}>
-                      {msg.burn && msg.readAt ? (
+                  {/* Contenedor con efecto blur condicional */}
+                  <div className={`transition-all duration-300 ${isBlurry ? 'blur-md select-none' : ''}`}>
+                      {msg.burn && msg.readAt && msg.type !== 'audio' ? (
                           <div className="flex flex-col gap-1">
                               <div className="text-red-400 text-xs flex items-center gap-2 animate-pulse font-bold">
                                   <Flame className="w-3 h-3"/> 
                                   Destrucción en {secondsLeft}s
                               </div>
-                              {/* Contenido visible mientras dure el contador */}
                               {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
-                              {msg.type === 'audio' && <audio controls src={msg.content} className="h-8 w-48"/>}
                               {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
                           </div>
                       ) : (
@@ -617,9 +611,7 @@ const App = () => {
                                       controls 
                                       src={msg.content} 
                                       className="h-8 w-48"
-                                      onEnded={() => {
-                                          removeMessage(activeContact, msg.id);
-                                      }}
+                                      onEnded={() => removeMessage(activeContact, msg.id)}
                                   />
                               )}
                               {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
@@ -627,8 +619,8 @@ const App = () => {
                       )}
                   </div>
                   
-                  {/* Overlay de Candado (SIN TEXTO) */}
-                  {!msg.isMe && !msg.readAt && (
+                  {/* Overlay de Candado (Solo si está borroso) */}
+                  {isBlurry && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                           <EyeOff className="w-6 h-6 text-white/50 animate-pulse"/>
                       </div>
@@ -643,7 +635,6 @@ const App = () => {
         </div>
 
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
-            {/* UI DE GRABACIÓN DE AUDIO MEJORADA */}
             {isRecording ? (
                 <div className="flex-1 flex items-center gap-3 bg-zinc-900 rounded-xl px-4 py-3">
                     <div className="animate-pulse text-red-500 flex items-center gap-2 flex-1">
@@ -665,7 +656,6 @@ const App = () => {
                 </>
             )}
             
-            {/* BOTÓN DINÁMICO DE ACCIÓN */}
             {isRecording ? (
                 <button onClick={stopRecordingAndSend} className="p-3 bg-green-600 rounded-xl animate-pulse shadow-[0_0_15px_rgba(22,163,74,0.5)]">
                     <Send className="w-5 h-5"/>
@@ -689,3 +679,4 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
