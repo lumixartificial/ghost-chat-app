@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell, Volume2, VolumeX
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -45,6 +45,34 @@ const CryptoUtils = {
   }
 };
 
+// --- UTILIDAD DE SONIDO (BEEP) ---
+const playBeep = () => {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        // Tono tipo "Sonar" suave y corto
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(800, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.15);
+        
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
+    } catch (e) {
+        // Fallo silencioso si el navegador bloquea audio sin interacción
+    }
+};
+
 const App = () => {
   // --- 1. ESTADOS ---
   const [hasLocalVault, setHasLocalVault] = useState(() => { try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; }});
@@ -57,7 +85,8 @@ const App = () => {
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
-  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true } });
+  // Añadido 'soundEnabled' a settings
+  const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true, soundEnabled: false } });
   
   // Refs
   const vaultDataRef = useRef(vaultData);
@@ -212,7 +241,10 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
-      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true };
+      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true, soundEnabled: false }; // Default sound false
+      // Migración segura de settings
+      if (decrypted.settings.soundEnabled === undefined) decrypted.settings.soundEnabled = false;
+      
       encryptionKeyRef.current = calcDisplay; 
       setVaultData(decrypted);
       setIsVaultLocked(false);
@@ -272,6 +304,11 @@ const App = () => {
           readAt: null 
         };
         saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
+        
+        // --- SONIDO DE NOTIFICACIÓN ---
+        if (currentData.settings?.soundEnabled) {
+            playBeep();
+        }
       }
     } catch (e) {}
   };
@@ -399,7 +436,7 @@ const App = () => {
         if (confirm("⚠️ ¿RESET DE FÁBRICA?")) {
           localStorage.removeItem(STORAGE_KEY);
           setHasLocalVault(false);
-          setVaultData({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true } });
+          setVaultData({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true, soundEnabled: false } });
           setCalcDisplay('0');
           return;
         }
@@ -431,10 +468,6 @@ const App = () => {
       }
       setNewContactName('');
     }
-  };
-
-  const toggleBurnMode = () => {
-    saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } });
   };
 
   const deleteChat = () => {
@@ -519,12 +552,21 @@ const App = () => {
                   {vaultData.settings?.burnOnRead ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
-             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
+             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl mb-2">
                <div className="flex items-center gap-3"><div className="p-2 bg-blue-900/20 rounded-lg text-blue-500"><Globe className="w-5 h-5"/></div><div><p className="font-medium text-sm">Persistencia</p><p className="text-[10px] text-zinc-500">Guardar chats</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, persistHistory: !vaultData.settings?.persistHistory } })} className="cursor-pointer">
                   {vaultData.settings?.persistHistory ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
+             
+             {/* TOGGLE NOTIFICACIÓN SONORA */}
+             <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
+               <div className="flex items-center gap-3"><div className="p-2 bg-green-900/20 rounded-lg text-green-500"><Bell className="w-5 h-5"/></div><div><p className="font-medium text-sm">Alerta Sonora</p><p className="text-[10px] text-zinc-500">Beep discreto al recibir</p></div></div>
+               <div onClick={() => saveToVault({ settings: { ...vaultData.settings, soundEnabled: !vaultData.settings?.soundEnabled } })} className="cursor-pointer">
+                  {vaultData.settings?.soundEnabled ? <ToggleRight className="w-8 h-8 text-green-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
+               </div>
+             </div>
+
            </div>
            <div>
              <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Zona de Peligro</h3>
@@ -712,5 +754,6 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
 
 
