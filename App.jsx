@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -107,8 +107,6 @@ const App = () => {
         if (view === 'chat' && activeContact) {
             const msgs = vaultDataRef.current.messages[activeContact] || [];
             
-            // Borrar si: tiene burn activado, ya fue leído, y pasaron 10s desde la lectura
-            // EXCEPCIÓN: Los audios se borran por evento onEnded, no por tiempo aquí (salvo limpieza general)
             const toDelete = msgs.filter(m => 
                 m.type !== 'audio' && 
                 m.burn && 
@@ -165,6 +163,20 @@ const App = () => {
     const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem(STORAGE_KEY, encrypted);
     setHasLocalVault(true);
+  };
+
+  // NUEVO: Función para abrir chat y limpiar notificaciones
+  const handleOpenChat = (contact) => {
+    setActiveContact(contact);
+    setView('chat');
+    
+    // Marcar todos los mensajes de este contacto como leídos (para notificación de lista)
+    // Nota: Esto NO inicia el timer de quemado. El timer inicia con 'readAt' al tocar el mensaje.
+    const currentMsgs = vaultDataRef.current.messages[contact] || [];
+    if (currentMsgs.some(m => !m.isMe && !m.read)) {
+        const updatedMsgs = currentMsgs.map(m => (!m.isMe ? { ...m, read: true } : m));
+        saveToVault({ messages: { ...vaultDataRef.current.messages, [contact]: updatedMsgs } });
+    }
   };
 
   const handleReadMessage = (contact, msgId) => {
@@ -409,6 +421,7 @@ const App = () => {
     }
   };
 
+  // UI HELPERS
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
@@ -540,11 +553,29 @@ const App = () => {
         <div className="p-4">
           <div className="flex gap-2 mb-6"><input placeholder="ID Amigo..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={addContact} className="bg-blue-600 p-3 rounded-lg hover:bg-blue-500 transition-colors"><UserPlus className="w-5 h-5"/></button></div>
           <div className="space-y-2">
-            {vaultData.contacts.map(c => (
-              <div key={c} onClick={() => { setActiveContact(c); setView('chat'); }} className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900 transition-colors">
-                <div className="flex items-center gap-3"><div className="w-10 h-10 bg-blue-900 rounded-full flex items-center justify-center font-bold text-sm uppercase">{c[0]}</div><div><h3 className="font-medium">{c}</h3></div></div><ChevronLeft className="rotate-180 w-5 h-5 text-zinc-600"/>
-              </div>
-            ))}
+            {vaultData.contacts.map(c => {
+                // Cálculo de mensajes no leídos para el BADGE (Notificación)
+                const unreadCount = (vaultData.messages[c] || []).filter(m => !m.isMe && !m.read).length;
+                
+                return (
+                  <div key={c} onClick={() => handleOpenChat(c)} className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900 transition-colors">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-blue-900 rounded-full flex items-center justify-center font-bold text-sm uppercase">{c[0]}</div>
+                        <div><h3 className="font-medium">{c}</h3></div>
+                    </div>
+                    
+                    <div className="flex items-center gap-2">
+                        {/* NOTIFICACIÓN VISUAL (BADGE) */}
+                        {unreadCount > 0 && (
+                            <div className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-pulse">
+                                {unreadCount}
+                            </div>
+                        )}
+                        <ChevronLeft className="rotate-180 w-5 h-5 text-zinc-600"/>
+                    </div>
+                  </div>
+                );
+            })}
           </div>
         </div>
         <div className="mt-auto p-6 text-center border-t border-zinc-900 bg-black">
@@ -635,6 +666,7 @@ const App = () => {
         </div>
 
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
+            {/* UI DE GRABACIÓN DE AUDIO MEJORADA */}
             {isRecording ? (
                 <div className="flex-1 flex items-center gap-3 bg-zinc-900 rounded-xl px-4 py-3">
                     <div className="animate-pulse text-red-500 flex items-center gap-2 flex-1">
@@ -656,6 +688,7 @@ const App = () => {
                 </>
             )}
             
+            {/* BOTÓN DINÁMICO DE ACCIÓN */}
             {isRecording ? (
                 <button onClick={stopRecordingAndSend} className="p-3 bg-green-600 rounded-xl animate-pulse shadow-[0_0_15px_rgba(22,163,74,0.5)]">
                     <Send className="w-5 h-5"/>
@@ -679,4 +712,5 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
 
