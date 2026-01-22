@@ -1,5 +1,5 @@
 {
-  "name": "Calculator",
+  "name": "Calculadora",
   "short_name": "Calculadora",
   "start_url": "/",
   "display": "standalone",
@@ -18,5 +18,5 @@
       "sizes": "192x192"
     }
   ]
-
 }
+
