@@ -5,6 +5,10 @@ import {
   Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete
 } from 'lucide-react';
 
+// --- CONFIGURACIÓN ---
+const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
+const STORAGE_KEY = 'ghost_vault_v6';
+
 // --- FIX CONSOLA ---
 const originalError = console.error;
 console.error = (...args) => {
@@ -12,11 +16,7 @@ console.error = (...args) => {
   originalError.call(console, ...args);
 };
 
-// --- CONFIGURACIÓN ---
-const RELAY_URL = 'wss://ghost-relay-9c9e.onrender.com';
-const STORAGE_KEY = 'ghost_vault_v6';
-
-// --- CRYPTO ---
+// --- MOTOR CRIPTOGRÁFICO ---
 const CryptoUtils = {
   deriveKey: async (password, salt) => {
     const enc = new TextEncoder();
@@ -46,6 +46,7 @@ const CryptoUtils = {
 };
 
 const App = () => {
+  // --- 1. ESTADOS (HOOKS SIEMPRE AL INICIO) ---
   const [hasLocalVault, setHasLocalVault] = useState(() => { try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; }});
   const [isVaultLocked, setIsVaultLocked] = useState(true);
   const [view, setView] = useState('contacts'); 
@@ -58,43 +59,90 @@ const App = () => {
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
   const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
   
+  // Refs
   const vaultDataRef = useRef(vaultData);
   const encryptionKeyRef = useRef('');
+  const panicCounterRef = useRef(0); // Ref para el pánico (más fiable que state)
+  const lastPanicTapRef = useRef(0);
   
+  // UI Chat
   const [activeContact, setActiveContact] = useState(null); 
   const [inputText, setInputText] = useState('');
   const [newContactName, setNewContactName] = useState('');
-  const [panicCount, setPanicCount] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
+  const [networkLogs, setNetworkLogs] = useState([]);
   
+  // Refs DOM/Lógica
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-  const panicTimeoutRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
+  // --- 2. EFECTOS (SIEMPRE AL INICIO) ---
+
+  // Sincronizar Ref con State
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // --- LOGICA INSTALACIÓN ---
+  // Configuración Inicial PWA
   useEffect(() => {
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
-
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
     });
   }, []);
 
-  // --- LOGICA PÁNICO ---
+  // Lógica BURN (Autodestrucción) - MOVIDA AQUÍ PARA EVITAR ERRORES
+  useEffect(() => {
+    let interval;
+    // Solo activamos el intervalo si estamos en el chat y no está bloqueado
+    if (view === 'chat' && activeContact && !isVaultLocked) {
+      interval = setInterval(() => {
+        const msgs = vaultData.messages[activeContact] || [];
+        const now = Date.now();
+        // Borrar mensajes quemables ajenos que tengan más de 5s desde su ID (timestamp)
+        const toDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.id > 5000));
+        
+        if (toDelete.length > 0) {
+           const newMsgs = msgs.filter(m => !toDelete.includes(m));
+           // Guardado silencioso sin cambiar estado visual brusco
+           const newData = { ...vaultData };
+           newData.messages[activeContact] = newMsgs;
+           setVaultData(newData); // Actualiza estado
+           // No guardamos en disco en cada tick para rendimiento, solo en eventos grandes
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [view, activeContact, isVaultLocked, vaultData]);
+
+  // --- 3. FUNCIONES LÓGICAS ---
+
+  // PÁNICO (Triple Tap Robusto)
   const handlePanicTrigger = () => {
-    setPanicCount(prev => prev + 1);
-    if (panicTimeoutRef.current) clearTimeout(panicTimeoutRef.current);
-    panicTimeoutRef.current = setTimeout(() => setPanicCount(0), 1000); 
-    if (panicCount >= 2) {
-      localStorage.clear(); sessionStorage.clear(); setVaultData(null); window.location.href = "https://google.com";
+    const now = Date.now();
+    if (now - lastPanicTapRef.current < 500) {
+        panicCounterRef.current += 1;
+    } else {
+        panicCounterRef.current = 1;
+    }
+    lastPanicTapRef.current = now;
+
+    if (panicCounterRef.current >= 3) {
+      executePanicWipe();
     }
   };
 
-  // --- LOGICA BÓVEDA ---
+  const executePanicWipe = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    setVaultData(null);
+    window.location.href = "https://google.com";
+  };
+
+  // BÓVEDA
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
@@ -111,6 +159,7 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
+      if (!decrypted.settings) decrypted.settings = { burnOnRead: false };
       encryptionKeyRef.current = calcDisplay; 
       setVaultData(decrypted);
       setIsVaultLocked(false);
@@ -120,31 +169,37 @@ const App = () => {
     }
   };
 
+  // RED
   const connectToRelay = (user) => {
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
       socketRef.current = new WebSocket(RELAY_URL);
-      socketRef.current.onopen = () => { setIsConnected(true); socketRef.current.send(JSON.stringify({ type: 'REGISTER', username: user.toLowerCase() })); };
-      socketRef.current.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === 'INCOMING_MSG') {
-            const sender = data.from;
-            const currentData = vaultDataRef.current;
-            let newContacts = [...currentData.contacts];
-            if (!newContacts.includes(sender)) newContacts.push(sender);
-            
-            const msgObj = {
-              id: Date.now(),
-              type: data.contentType, content: data.content, sender: sender,
-              timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-              isMe: false, read: false, burn: data.burn
-            };
-            saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
-          }
-        } catch (e) {}
+      socketRef.current.onopen = () => { 
+          setIsConnected(true); 
+          socketRef.current.send(JSON.stringify({ type: 'REGISTER', username: user.toLowerCase() })); 
       };
+      socketRef.current.onmessage = (e) => handleIncoming(e.data);
       socketRef.current.onclose = () => setIsConnected(false);
     }
+  };
+
+  const handleIncoming = (jsonStr) => {
+    try {
+      const data = JSON.parse(jsonStr);
+      if (data.type === 'INCOMING_MSG') {
+        const sender = data.from;
+        const currentData = vaultDataRef.current;
+        let newContacts = [...currentData.contacts];
+        if (!newContacts.includes(sender)) newContacts.push(sender);
+        
+        const msgObj = {
+          id: Date.now(),
+          type: data.contentType, content: data.content, sender: sender,
+          timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+          isMe: false, read: false, burn: data.burn
+        };
+        saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
+      }
+    } catch (e) {}
   };
 
   const sendMessage = (type = 'text', content = null) => {
@@ -166,11 +221,36 @@ const App = () => {
     if (type === 'text') setInputText('');
   };
 
+  // AUDIO
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mediaRecorderRef.current.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = () => sendMessage('audio', reader.result);
+      };
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+    } catch (e) { alert("Micrófono bloqueado."); }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  // CALCULADORA
   const handleCalcClick = (val) => {
-    if (val === '=') {
-      // CÓDIGO DE EMERGENCIA: 000000
+    if (val === '=') { 
       if (calcDisplay === '000000') {
-        if (confirm("⚠️ ¿RESETEO DE FÁBRICA? \nSe perderán todos los datos y podrás crear un nuevo usuario.")) {
+        if (confirm("⚠️ ¿RESET DE FÁBRICA?")) {
           localStorage.removeItem(STORAGE_KEY);
           setHasLocalVault(false);
           setVaultData({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false } });
@@ -178,7 +258,6 @@ const App = () => {
           return;
         }
       }
-      
       hasLocalVault ? attemptUnlock() : (()=>{ try { setCalcDisplay(String(new Function('return ' + calcDisplay.replace(/×/g, '*').replace(/÷/g, '/'))())); } catch { setCalcDisplay('Error'); } })(); 
       return; 
     }
@@ -190,11 +269,9 @@ const App = () => {
   const installPWA = () => {
     if (installPrompt) {
       installPrompt.prompt();
-      installPrompt.userChoice.then((choiceResult) => { 
-        if (choiceResult.outcome === 'accepted') setInstallPrompt(null); 
-      });
+      installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
     } else {
-      alert("Instalación manual:\nAndroid: Menú > Instalar aplicación\niOS: Compartir > Añadir a pantalla de inicio");
+      alert("Para instalar: \nAndroid: Menú > Instalar aplicación\niOS: Compartir > Añadir a pantalla de inicio");
     }
   };
 
@@ -206,7 +283,9 @@ const App = () => {
     setIsConnected(false);
   };
 
-  // --- VISTAS ---
+  // --- 4. RENDERIZADO CONDICIONAL ---
+
+  // A. SETUP
   if (!hasLocalVault) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-6 font-sans">
@@ -226,13 +305,10 @@ const App = () => {
     );
   }
 
+  // B. CALCULADORA (LOCK)
   if (isVaultLocked || isLoading) {
-    // DISEÑO ANDROID NATIVO
     const calcBtns = [
-      { l: 'AC', c: 'bg-zinc-600 text-red-300' }, 
-      { l: 'DEL', c: 'bg-zinc-600 text-white', icon: <Delete className="w-6 h-6"/> }, 
-      { l: '%', c: 'bg-zinc-600 text-white' }, 
-      { l: '÷', c: 'bg-blue-600 text-white font-bold text-2xl' },
+      { l: 'AC', c: 'bg-zinc-600 text-red-300' }, { l: 'DEL', c: 'bg-zinc-600 text-white', icon: <Delete className="w-6 h-6"/> }, { l: '%', c: 'bg-zinc-600 text-white' }, { l: '÷', c: 'bg-blue-600 text-white font-bold text-2xl' },
       { l: '7', c: 'bg-zinc-800 text-white' }, { l: '8', c: 'bg-zinc-800 text-white' }, { l: '9', c: 'bg-zinc-800 text-white' }, { l: '×', c: 'bg-blue-600 text-white font-bold text-2xl' },
       { l: '4', c: 'bg-zinc-800 text-white' }, { l: '5', c: 'bg-zinc-800 text-white' }, { l: '6', c: 'bg-zinc-800 text-white' }, { l: '-', c: 'bg-blue-600 text-white font-bold text-2xl' },
       { l: '1', c: 'bg-zinc-800 text-white' }, { l: '2', c: 'bg-zinc-800 text-white' }, { l: '3', c: 'bg-zinc-800 text-white' }, { l: '+', c: 'bg-blue-600 text-white font-bold text-2xl' },
@@ -248,11 +324,7 @@ const App = () => {
             </div>
             <div className="grid grid-cols-4 gap-4 mb-4">
               {calcBtns.map((btn, i) => (
-                <button 
-                  key={i} 
-                  onClick={() => handleCalcClick(btn.l)} 
-                  className={`aspect-square rounded-full flex items-center justify-center text-2xl transition-all active:scale-90 ${btn.c}`}
-                >
+                <button key={i} onClick={() => handleCalcClick(btn.l)} className={`aspect-square rounded-full flex items-center justify-center text-2xl transition-all active:scale-90 ${btn.c}`}>
                   {btn.icon || btn.l}
                 </button>
               ))}
@@ -268,7 +340,7 @@ const App = () => {
     );
   }
 
-  // --- APP DESBLOQUEADA ---
+  // C. APP - CONTACTOS
   if (view === 'contacts') {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
@@ -277,7 +349,7 @@ const App = () => {
             {isConnected ? <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"/> : <div className="w-2 h-2 rounded-full bg-red-500" onClick={() => connectToRelay(vaultData.username)}/>}
             <span className="font-bold text-sm tracking-tight">{vaultData.username?.toUpperCase()}</span>
           </div>
-          <div className="flex gap-4"><Lock className="w-5 h-5 text-zinc-500 cursor-pointer" onClick={lockVault} /><Settings className="w-5 h-5 text-zinc-600"/></div>
+          <div className="flex gap-4"><Lock className="w-5 h-5 text-zinc-500 cursor-pointer" onClick={lockVault} /><Settings className="w-5 h-5 text-zinc-600 cursor-help" onClick={(e) => { e.stopPropagation(); alert("Triple toque para PÁNICO"); }}/></div>
         </header>
         <div className="p-4">
           <div className="flex gap-2 mb-6"><input placeholder="ID Amigo..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={() => { if(newContactName && !vaultData.contacts.includes(newContactName.toLowerCase())) saveToVault({ contacts: [...vaultData.contacts, newContactName.toLowerCase()] }); setNewContactName(''); }} className="bg-blue-600 p-3 rounded-lg"><UserPlus className="w-5 h-5"/></button></div>
@@ -294,40 +366,65 @@ const App = () => {
     );
   }
 
+  // D. APP - CHAT
   if (view === 'chat') {
     const msgs = vaultData.messages[activeContact] || [];
-    useEffect(() => {
-      const interval = setInterval(() => {
-        const now = Date.now();
-        const toDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.id > 5000));
-        if (toDelete.length > 0) {
-           const newMsgs = msgs.filter(m => !toDelete.includes(m));
-           saveToVault({ messages: { ...vaultData.messages, [activeContact]: newMsgs } });
-        }
-      }, 1000);
-      return () => clearInterval(interval);
-    }, [msgs, activeContact]);
+    const burnMode = vaultData.settings?.burnOnRead || false;
 
     return (
       <div className="min-h-screen bg-black text-white flex flex-col max-w-md mx-auto border-x border-zinc-900 font-sans">
         <header onClick={handlePanicTrigger} className="p-3 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3"><button onClick={() => setView('contacts')}><ChevronLeft/></button><span className="font-bold text-sm">{activeContact}</span></div>
-          <div className="flex gap-3"><button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } })} className={`p-2 rounded-full ${vaultData.settings.burnOnRead ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button><button onClick={() => { if(confirm("¿Borrar?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button></div>
+          <div className="flex gap-3">
+            <button onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !burnMode } })} className={`p-2 rounded-full ${burnMode ? 'text-red-500 animate-pulse' : 'text-zinc-600'}`}><Flame className="w-4 h-4"/></button>
+            <button onClick={() => { if(confirm("¿Borrar?")) { const m = {...vaultData.messages}; delete m[activeContact]; saveToVault({messages:m}); }}} className="text-zinc-600"><Trash2 className="w-4 h-4"/></button>
+          </div>
         </header>
+        
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => (
             <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}>
-                {msg.burn && !msg.isMe ? <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción... <span className="blur-sm hover:blur-0 cursor-pointer text-white">{msg.content}</span></div> : (msg.type === 'image' ? <img src={msg.content} className="rounded-lg max-h-48"/> : <p className="text-sm">{msg.content}</p>)}
+                {msg.burn && !msg.isMe ? (
+                    <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción...</div>
+                ) : (
+                    <>
+                        {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
+                        {msg.type === 'audio' && <audio controls src={msg.content} className="h-8 w-48"/>}
+                        {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
+                    </>
+                )}
+                <span className="text-[9px] opacity-30 block text-right mt-1">{msg.timestamp}</span>
               </div>
             </div>
           ))}
           <div ref={messagesEndRef}/>
         </div>
+
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
             <label className="p-3 text-zinc-500"><ImageIcon className="w-5 h-5"/><input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={e => { if(e.target.files[0]) { const r = new FileReader(); r.onload=()=>sendMessage('image', r.result); r.readAsDataURL(e.target.files[0]); } e.target.value=''; }}/></label>
-            <input className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" placeholder={vaultData.settings.burnOnRead ? "Autodestrucción..." : "Mensaje..."} value={inputText} onChange={e => setInputText(e.target.value)} onKeyPress={e => e.key === 'Enter' && sendMessage('text')}/>
-            <button onClick={() => sendMessage('text')} className="p-3 bg-blue-600 rounded-xl"><Send className="w-5 h-5"/></button>
+            
+            <input 
+                className="flex-1 bg-zinc-900 rounded-xl px-4 py-3 text-sm text-white outline-none" 
+                placeholder={burnMode ? "Autodestrucción..." : "Mensaje..."} 
+                value={inputText} 
+                onChange={e => setInputText(e.target.value)} 
+                onKeyPress={e => e.key === 'Enter' && sendMessage('text')}
+            />
+            
+            {inputText.trim() ? (
+                <button onClick={() => sendMessage('text')} className="p-3 bg-blue-600 rounded-xl"><Send className="w-5 h-5"/></button>
+            ) : (
+                <button 
+                    onMouseDown={startRecording} 
+                    onMouseUp={stopRecording} 
+                    onTouchStart={startRecording} 
+                    onTouchEnd={stopRecording}
+                    className={`p-3 rounded-xl transition-colors ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-zinc-800 text-zinc-400'}`}
+                >
+                    <Mic className="w-5 h-5"/>
+                </button>
+            )}
         </div>
       </div>
     );
@@ -338,3 +435,4 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
