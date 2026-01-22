@@ -1,8 +1,7 @@
-const CACHE_NAME = 'calc-native-v2';
+const CACHE_NAME = 'calc-segura-v6'; // Versión actualizada
 
-// Instal·lació immediata
 self.addEventListener('install', (event) => {
-  self.skipWaiting(); // Força l'activació sense esperar
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.add('/');
@@ -10,15 +9,12 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Prendre el control immediatament
 self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Estratègia de xarxa primer, després caché (per a actualitzacions ràpides)
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    fetch(event.request)
-      .catch(() => caches.match(event.request))
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });
