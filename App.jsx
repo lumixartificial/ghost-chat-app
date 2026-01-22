@@ -73,7 +73,7 @@ const App = () => {
   const [networkLogs, setNetworkLogs] = useState([]);
   const [showAudioToast, setShowAudioToast] = useState(false);
   
-  // Nuevo Estado para el Reloj Global (Cuenta regresiva)
+  // Reloj Global
   const [currentTime, setCurrentTime] = useState(Date.now());
   
   // Refs DOM/Lógica
@@ -85,6 +85,7 @@ const App = () => {
 
   // --- 2. EFECTOS ---
 
+  // Sincronizar Ref con State (Backup)
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
   useEffect(() => {
@@ -96,21 +97,18 @@ const App = () => {
     });
   }, []);
 
-  // Lógica BURN UNIFICADA (Timer Global + Borrado)
+  // Lógica BURN UNIFICADA
   useEffect(() => {
     let interval;
-    // El timer corre siempre si la app está desbloqueada para actualizar las cuentas regresivas
     if (!isVaultLocked) {
       interval = setInterval(() => {
         const now = Date.now();
-        setCurrentTime(now); // Actualizar reloj UI
+        setCurrentTime(now);
 
-        // Si estamos en un chat, verificar borrado
         if (view === 'chat' && activeContact) {
             const msgs = vaultDataRef.current.messages[activeContact] || [];
             
-            // Borrar mensajes con burn activo que ya pasaron su tiempo (10s)
-            // Aplica tanto para MIS mensajes enviados como para los recibidos y LEÍDOS
+            // Borrar si: tiene burn activado, ya fue leído, y pasaron 10s desde la lectura
             const toDelete = msgs.filter(m => 
                 m.burn && 
                 m.readAt && 
@@ -119,9 +117,11 @@ const App = () => {
             
             if (toDelete.length > 0) {
                const newMsgs = msgs.filter(m => !toDelete.includes(m));
-               // Actualizar estado y disco
+               // Guardar usando el ref para evitar race conditions
                const newData = { ...vaultDataRef.current };
                newData.messages[activeContact] = newMsgs;
+               
+               // Actualizar estado y disco inmediatamente
                setVaultData(newData); 
                saveToVault({ messages: { ...vaultDataRef.current.messages, [activeContact]: newMsgs } });
             }
@@ -129,7 +129,7 @@ const App = () => {
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [view, activeContact, isVaultLocked]); // Quitamos vaultData de dependencias para evitar loops, usamos ref
+  }, [view, activeContact, isVaultLocked]); 
 
   // --- 3. FUNCIONES LÓGICAS ---
 
@@ -157,8 +157,13 @@ const App = () => {
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
+    
+    // Mezclar con el REF para asegurar que tenemos lo último
     const updatedVault = { ...vaultDataRef.current, ...newData };
-    setVaultData(updatedVault); // Actualiza estado visual
+    
+    setVaultData(updatedVault);
+    vaultDataRef.current = updatedVault; // Actualizar ref manualmente por seguridad
+    
     const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem(STORAGE_KEY, encrypted);
     setHasLocalVault(true);
@@ -166,7 +171,7 @@ const App = () => {
 
   // NUEVO: Marcar mensaje como leído (Desenfocar)
   const handleReadMessage = (contact, msgId) => {
-    const msgs = vaultData.messages[contact] || [];
+    const msgs = vaultDataRef.current.messages[contact] || [];
     const msgIndex = msgs.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
 
@@ -177,8 +182,7 @@ const App = () => {
     const newMsgs = [...msgs];
     newMsgs[msgIndex] = newMsg;
 
-    setVaultData({ ...vaultData, messages: { ...vaultData.messages, [contact]: newMsgs } });
-    saveToVault({ messages: { ...vaultData.messages, [contact]: newMsgs } });
+    saveToVault({ messages: { ...vaultDataRef.current.messages, [contact]: newMsgs } });
   };
 
   const removeMessage = (contact, msgId) => {
@@ -243,19 +247,22 @@ const App = () => {
       const data = JSON.parse(jsonStr);
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
-        
         const currentData = vaultDataRef.current;
+        
         let newContacts = [...currentData.contacts];
         if (!newContacts.includes(sender)) newContacts.push(sender);
         
+        // Si YO tengo activada la autodestrucción, fuerzo el flag burn en lo que recibo
+        const shouldBurn = data.burn || currentData.settings.burnOnRead;
+
         const msgObj = {
           id: Date.now(),
           type: data.contentType, content: data.content, sender: sender,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
           isMe: false, 
           read: false, 
-          burn: data.burn,
-          readAt: null // Inicialmente no leído (borroso)
+          burn: shouldBurn,
+          readAt: null // Inicialmente borroso
         };
         saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
       }
@@ -275,7 +282,7 @@ const App = () => {
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
           isMe: true, 
           burn: currentData.settings.burnOnRead, 
-          readAt: Date.now() // Mis mensajes nacen leídos, empieza la cuenta regresiva YA si burn=true
+          readAt: Date.now() // Mis mensajes nacen leídos
         };
         saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
     } else {
@@ -580,7 +587,7 @@ const App = () => {
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => {
-             // Calculamos el tiempo restante para el burn (solo si ya fue leído)
+             // Calculamos el tiempo restante para el burn
              const secondsLeft = msg.burn && msg.readAt ? Math.max(0, Math.ceil(10 - (currentTime - msg.readAt) / 1000)) : null;
 
              return (
@@ -620,11 +627,10 @@ const App = () => {
                       )}
                   </div>
                   
-                  {/* Overlay de Candado si está bloqueado */}
+                  {/* Overlay de Candado (SIN TEXTO) */}
                   {!msg.isMe && !msg.readAt && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                          <EyeOff className="w-5 h-5 text-white/50 animate-pulse"/>
-                          <span className="ml-2 text-xs text-white/50 font-bold">TOCAR PARA LEER</span>
+                          <EyeOff className="w-6 h-6 text-white/50 animate-pulse"/>
                       </div>
                   )}
 
