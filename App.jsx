@@ -71,7 +71,7 @@ const App = () => {
   const [newContactName, setNewContactName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [networkLogs, setNetworkLogs] = useState([]);
-  const [showAudioToast, setShowAudioToast] = useState(false); // Estado para notificación de audio
+  const [showAudioToast, setShowAudioToast] = useState(false);
   
   // Refs DOM/Lógica
   const socketRef = useRef(null);
@@ -93,15 +93,21 @@ const App = () => {
     });
   }, []);
 
-  // Lógica BURN (Autodestrucción por tiempo para TEXTO/FOTOS)
+  // Lógica BURN (Autodestrucción 10s tras LEER)
   useEffect(() => {
     let interval;
     if (view === 'chat' && activeContact && !isVaultLocked) {
       interval = setInterval(() => {
         const msgs = vaultData.messages[activeContact] || [];
         const now = Date.now();
-        // Borrar mensajes quemables ajenos que tengan más de 5s desde su recepción
-        const toDelete = msgs.filter(m => m.burn && !m.isMe && (now - m.id > 5000));
+        
+        // Solo borrar si tiene flag burn, no soy yo, YA FUE LEÍDO (readAt existe) y pasaron 10s
+        const toDelete = msgs.filter(m => 
+            m.burn && 
+            !m.isMe && 
+            m.readAt && 
+            (now - m.readAt > 10000)
+        );
         
         if (toDelete.length > 0) {
            const newMsgs = msgs.filter(m => !toDelete.includes(m));
@@ -117,7 +123,6 @@ const App = () => {
 
   // --- 3. FUNCIONES LÓGICAS ---
 
-  // PÁNICO
   const handlePanicTrigger = () => {
     const now = Date.now();
     if (now - lastPanicTapRef.current < 500) {
@@ -139,7 +144,6 @@ const App = () => {
     window.location.href = "https://google.com";
   };
 
-  // BÓVEDA
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
@@ -150,7 +154,23 @@ const App = () => {
     setHasLocalVault(true);
   };
 
-  // BORRADO LOCAL
+  // NUEVO: Marcar mensaje como leído (Desenfocar)
+  const handleReadMessage = (contact, msgId) => {
+    const msgs = vaultData.messages[contact] || [];
+    const msgIndex = msgs.findIndex(m => m.id === msgId);
+    if (msgIndex === -1) return;
+
+    // Si ya fue leído, no hacemos nada
+    if (msgs[msgIndex].readAt) return;
+
+    const newMsg = { ...msgs[msgIndex], readAt: Date.now() };
+    const newMsgs = [...msgs];
+    newMsgs[msgIndex] = newMsg;
+
+    setVaultData({ ...vaultData, messages: { ...vaultData.messages, [contact]: newMsgs } });
+    saveToVault({ messages: { ...vaultData.messages, [contact]: newMsgs } });
+  };
+
   const removeMessage = (contact, msgId) => {
     const currentData = vaultDataRef.current;
     const currentMessages = currentData.messages[contact] || [];
@@ -196,7 +216,6 @@ const App = () => {
     setView('contacts'); 
   };
 
-  // RED
   const connectToRelay = (user) => {
     if (!socketRef.current || socketRef.current.readyState === WebSocket.CLOSED) {
       socketRef.current = new WebSocket(RELAY_URL);
@@ -223,30 +242,30 @@ const App = () => {
           id: Date.now(),
           type: data.contentType, content: data.content, sender: sender,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-          isMe: false, read: false, burn: data.burn
+          isMe: false, 
+          read: false, 
+          burn: data.burn,
+          readAt: null // Inicialmente no leído (borroso)
         };
         saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
       }
     } catch (e) {}
   };
 
-  // --- ENVÍO DE MENSAJES (MODIFICADO: AUDIO EFÍMERO) ---
   const sendMessage = (type = 'text', content = null) => {
     const payload = content || inputText;
     if (!payload || !activeContact) return;
     const target = activeContact.toLowerCase();
     const currentData = vaultDataRef.current;
     
-    // Si NO es audio, lo guardamos localmente. Si ES audio, NO se guarda (Fire & Forget).
     if (type !== 'audio') {
         const msgObj = {
           id: Date.now(), type, content: payload, sender: currentData.username,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-          isMe: true, burn: currentData.settings.burnOnRead
+          isMe: true, burn: currentData.settings.burnOnRead, readAt: Date.now() // Mis mensajes nacen leídos
         };
         saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
     } else {
-        // Notificación visual de envío de audio
         setShowAudioToast(true);
         setTimeout(() => setShowAudioToast(false), 3000);
     }
@@ -376,7 +395,6 @@ const App = () => {
     }
   };
 
-  // UI HELPERS
   const addContact = () => {
     if (newContactName) {
       const normalizedName = newContactName.trim().toLowerCase();
@@ -469,7 +487,7 @@ const App = () => {
            <div>
              <h3 className="text-zinc-500 text-xs uppercase font-bold mb-3">Privacidad</h3>
              <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl mb-2">
-               <div className="flex items-center gap-3"><div className="p-2 bg-red-900/20 rounded-lg text-red-500"><Flame className="w-5 h-5"/></div><div><p className="font-medium text-sm">Autodestrucción</p><p className="text-[10px] text-zinc-500">Borrar tras leer (5s)</p></div></div>
+               <div className="flex items-center gap-3"><div className="p-2 bg-red-900/20 rounded-lg text-red-500"><Flame className="w-5 h-5"/></div><div><p className="font-medium text-sm">Autodestrucción</p><p className="text-[10px] text-zinc-500">Borrar tras leer (10s)</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings?.burnOnRead } })} className="cursor-pointer">
                   {vaultData.settings?.burnOnRead ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
@@ -550,26 +568,40 @@ const App = () => {
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => (
             <div key={i} className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'}`}>
-                {msg.burn && !msg.isMe ? (
-                    <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción...</div>
-                ) : (
-                    <>
-                        {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
-                        {msg.type === 'audio' && (
-                            <audio 
-                                controls 
-                                src={msg.content} 
-                                className="h-8 w-48"
-                                onEnded={() => {
-                                    // Eliminación local en el receptor
-                                    removeMessage(activeContact, msg.id);
-                                }}
-                            />
-                        )}
-                        {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
-                    </>
+              <div 
+                onClick={() => !msg.isMe && !msg.readAt && handleReadMessage(activeContact, msg.id)}
+                className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'} relative cursor-pointer`}
+              >
+                {/* Lógica Blur / Tap to Read */}
+                <div className={`transition-all duration-300 ${!msg.isMe && !msg.readAt ? 'blur-md select-none' : ''}`}>
+                    {msg.burn && !msg.isMe && msg.readAt ? (
+                        <div className="text-red-400 text-xs flex gap-2 animate-pulse"><Flame className="w-3 h-3"/>Autodestrucción en 10s...</div>
+                    ) : (
+                        <>
+                            {msg.type === 'image' && <img src={msg.content} className="rounded-lg max-h-48 border border-white/10"/>}
+                            {msg.type === 'audio' && (
+                                <audio 
+                                    controls 
+                                    src={msg.content} 
+                                    className="h-8 w-48"
+                                    onEnded={() => {
+                                        // Eliminación local en el receptor
+                                        removeMessage(activeContact, msg.id);
+                                    }}
+                                />
+                            )}
+                            {msg.type === 'text' && <p className="text-sm">{msg.content}</p>}
+                        </>
+                    )}
+                </div>
+                
+                {/* Overlay de Candado si está bloqueado */}
+                {!msg.isMe && !msg.readAt && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <EyeOff className="w-5 h-5 text-white/50 animate-pulse"/>
+                    </div>
                 )}
+
                 <span className="text-[9px] opacity-30 block text-right mt-1">{msg.timestamp}</span>
               </div>
             </div>
