@@ -8,11 +8,11 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#000000">
     
-    <!-- iOS support -->
+    <!-- Soporte iOS -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Calculadora">
-    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2344/2344132.png">
+    <link rel="apple-touch-icon" href="https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -23,11 +23,11 @@
     <div id="root"></div>
     <script type="module" src="/App.jsx"></script>
     <script>
-      if ('serviceWorker' in navigator) {
+      if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.protocol === 'http:')) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('SW registrat', reg))
-            .catch(err => console.log('SW error', err));
+            .then(reg => console.log('SW OK'))
+            .catch(err => console.log('SW Fail', err));
         });
       }
     </script>
