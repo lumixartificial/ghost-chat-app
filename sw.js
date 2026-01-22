@@ -1,6 +1,6 @@
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open('ghost-store').then((cache) => cache.addAll([
+    caches.open('calc-secure-v1').then((cache) => cache.addAll([
       '/',
       '/index.html',
     ])),
@@ -8,7 +8,6 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  console.log(e.request.url);
   e.respondWith(
     caches.match(e.request).then((response) => response || fetch(e.request)),
   );
