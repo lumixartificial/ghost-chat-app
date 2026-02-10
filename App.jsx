@@ -45,9 +45,6 @@ const CryptoUtils = {
   }
 };
 
-// --- ICONO CALCULADORA ---
-const CALC_ICON = `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiI+PHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIGZpbGw9IiMzMzMiIHJ4PSIxMDAiLz48cmVjdCB4PSI1NiIgeT0iNTYiIHdpZHRoPSI0MDAiIGhlaWdodD0iMTIwIiBmaWxsPSIjYWFhIiByeD0iMjAiLz48Y2lyY2xlIGN4PSIxMTYiIGN5PSIyNTYiIHI9IjQwIiBmaWxsPSIjNjY2Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMzk2IiBjeT0iMjU2IiByPSI0MCIgZmlsbD0iI2ZmOTUwMCIvPjxjaXJNsZSBjeD0iMTE2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMjU2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMzk2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iI2ZmOTUwMCIvPjwvc3ZnPg==`;
-
 // --- UTILIDAD DE SONIDO (BEEP) ---
 const playBeep = () => {
     try {
@@ -95,6 +92,7 @@ const App = () => {
   const [newContactName, setNewContactName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [showAudioToast, setShowAudioToast] = useState(false);
+  const [networkLogs, setNetworkLogs] = useState([]);
   
   // Reloj Global
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -131,12 +129,16 @@ const App = () => {
     checkStyles();
   }, []);
 
+  // DETECCIÓN DE INSTALACIÓN (Sin inyección forzada para evitar errores)
   useEffect(() => {
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
+
+    // Capturar el evento nativo de Chrome para mostrar el botón
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
+      console.log("Evento de instalación capturado");
     });
   }, []);
 
@@ -430,13 +432,8 @@ const App = () => {
       installPrompt.prompt();
       installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
     } else {
-      // Detección mejorada
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-      if (isIOS) {
-          alert("Para instalar en iPhone/iPad:\n1. Toca el botón 'Compartir' (cuadrado con flecha)\n2. Baja y selecciona 'Añadir a pantalla de inicio'");
-      } else {
-          alert("Para instalar en Android:\n1. Toca los 3 puntos del navegador\n2. Selecciona 'Instalar aplicación' o 'Añadir a pantalla de inicio'");
-      }
+      // Si no tenemos el prompt automático, es porque el navegador no lo ha disparado aún o no soporta PWA bien.
+      alert("⚠️ Instalación Manual Requerida:\n\n1. Toca los 3 puntos (o menú) de Chrome.\n2. Busca la opción 'Instalar aplicación' o 'Agregar a pantalla principal'.\n\nSi no aparece, asegúrate de no estar en modo incógnito.");
     }
   };
 
@@ -634,6 +631,7 @@ const App = () => {
           </div>
         </header>
         
+        {/* Notificación Audio Enviado */}
         {showAudioToast && (
             <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 bg-zinc-800/95 border border-zinc-700 text-white px-4 py-2 rounded-full text-xs flex items-center gap-2 shadow-xl animate-bounce backdrop-blur-sm">
                 <Mic className="w-3 h-3 text-green-500" />
@@ -737,6 +735,7 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
 
 
 
