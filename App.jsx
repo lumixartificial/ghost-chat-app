@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell, Menu
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -72,10 +72,9 @@ const App = () => {
   const [view, setView] = useState('contacts'); 
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [installPrompt, setInstallPrompt] = useState(null); // Debe ser null al inicio
+  const [installPrompt, setInstallPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const [stylesLoaded, setStylesLoaded] = useState(false);
-  const [showInstallGuide, setShowInstallGuide] = useState(false); // Guía visual interna
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
@@ -109,9 +108,8 @@ const App = () => {
 
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // AUTO-REPARACIÓN VISUAL Y PWA FUERZA BRUTA
+  // AUTO-REPARACIÓN VISUAL
   useEffect(() => {
-    // Estilos
     document.body.style.backgroundColor = '#000000';
     document.body.style.color = '#ffffff';
     document.body.style.margin = '0';
@@ -119,8 +117,9 @@ const App = () => {
 
     const checkStyles = () => {
       const isLoaded = window.getComputedStyle(document.body).getPropertyValue('--tw-text-opacity') !== '';
-      if (isLoaded) setStylesLoaded(true);
-      else {
+      if (isLoaded) {
+        setStylesLoaded(true);
+      } else {
         const script = document.createElement('script');
         script.src = "https://cdn.tailwindcss.com";
         script.onload = () => setStylesLoaded(true);
@@ -128,68 +127,20 @@ const App = () => {
       }
     };
     checkStyles();
+  }, []);
 
-    // --- LÓGICA DE INSTALACIÓN REFORZADA ---
-    const initPWA = async () => {
-        // Detectar si ya está instalada
-        const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-        setIsStandalone(isInStandaloneMode);
+  // DETECCIÓN DE INSTALACIÓN ESTÁNDAR (SIN INYECCIONES RARAS)
+  useEffect(() => {
+    const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    setIsStandalone(isInStandaloneMode);
 
-        // Si ya está instalada, no hacemos nada más
-        if (isInStandaloneMode) return;
-
-        // 1. Inyectar Manifiesto Virtual si no existe
-        if (!document.querySelector('link[rel="manifest"]')) {
-            const manifest = {
-                name: "Calculadora",
-                short_name: "Calculadora",
-                start_url: "/",
-                display: "standalone",
-                background_color: "#000000",
-                theme_color: "#000000",
-                orientation: "portrait",
-                icons: [
-                    { src: "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203", sizes: "512x512", type: "image/png", purpose: "any maskable" }
-                ]
-            };
-            const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
-            const link = document.createElement('link');
-            link.rel = 'manifest';
-            link.href = URL.createObjectURL(blob);
-            document.head.appendChild(link);
-        }
-
-        // 2. Registrar Service Worker Virtual (Necesario para el prompt nativo en Android)
-        if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost')) {
-            try {
-                // Intentar registro de archivo físico primero
-                await navigator.serviceWorker.register('/sw.js');
-            } catch (e) {
-                // Fallback: SW en Memoria
-                console.log("Usando SW Virtual");
-                const swCode = `
-                    self.addEventListener('install', e => self.skipWaiting());
-                    self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
-                    self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
-                `;
-                const blob = new Blob([swCode], {type: 'text/javascript'});
-                await navigator.serviceWorker.register(URL.createObjectURL(blob));
-            }
-        }
-    };
-    
-    initPWA();
-
-    // Capturar evento 'beforeinstallprompt'
-    const handleInstallPrompt = (e) => {
-        e.preventDefault();
-        setInstallPrompt(e);
-        console.log("Evento de instalación capturado y listo.");
-    };
-
-    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
-
-    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+    // Solo escuchamos el evento nativo del navegador. Si Chrome lo dispara, mostramos el botón.
+    // Si no lo dispara, no mostramos nada para no confundir con instrucciones manuales.
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      console.log("Navegador listo para instalar nativamente.");
+    });
   }, []);
 
 
@@ -477,15 +428,11 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
-  // MODIFICADO: Lógica de instalación inteligente
-  const handleInstallClick = () => {
+  // MODIFICADO: Solo ejecuta la instalación si el navegador lo permite
+  const installPWA = () => {
     if (installPrompt) {
-      // Opción A: Tenemos el evento nativo
       installPrompt.prompt();
       installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
-    } else {
-      // Opción B: No hay evento (Xiaomi/iOS/Desktop) -> Mostrar Guía Visual
-      setShowInstallGuide(true);
     }
   };
 
@@ -524,38 +471,6 @@ const App = () => {
           <p style={{ marginTop: 20, fontFamily: 'monospace' }}>CARGANDO ENTORNO SEGURO...</p>
        </div>
     );
-  }
-
-  // --- MODAL DE GUÍA DE INSTALACIÓN (NUEVO) ---
-  if (showInstallGuide) {
-      return (
-          <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 text-center font-sans">
-              <Download className="w-16 h-16 text-blue-500 mb-6 animate-bounce" />
-              <h2 className="text-xl font-bold text-white mb-4">Instalación Manual Requerida</h2>
-              <p className="text-zinc-400 text-sm mb-6 max-w-xs">
-                Tu navegador bloqueó la instalación automática. Sigue estos pasos para instalar la app nativa:
-              </p>
-              
-              <div className="bg-zinc-900 p-4 rounded-xl text-left w-full max-w-sm mb-8 space-y-4">
-                  <div className="flex items-start gap-3">
-                      <div className="bg-blue-600/20 text-blue-500 w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">1</div>
-                      <p className="text-sm text-zinc-300">Toca el botón de <strong>Menú</strong> (3 puntos) en la esquina superior.</p>
-                  </div>
-                  <div className="flex items-start gap-3">
-                      <div className="bg-blue-600/20 text-blue-500 w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">2</div>
-                      <p className="text-sm text-zinc-300">Selecciona <strong className="text-white">"Instalar aplicación"</strong> o <strong className="text-white">"Añadir a pantalla de inicio"</strong>.</p>
-                  </div>
-                  <div className="flex items-start gap-3">
-                      <div className="bg-blue-600/20 text-blue-500 w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">3</div>
-                      <p className="text-sm text-zinc-300">Confirma la instalación.</p>
-                  </div>
-              </div>
-
-              <button onClick={() => setShowInstallGuide(false)} className="bg-blue-600 px-8 py-3 rounded-xl font-bold text-white w-full max-w-sm">
-                  ENTENDIDO
-              </button>
-          </div>
-      );
   }
 
   // A. SETUP
@@ -602,9 +517,9 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {/* Botón de instalación VISIBLE SI NO ES STANDALONE */}
-            {!isStandalone && (
-              <div onClick={handleInstallClick} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4">
+            {/* Solo mostramos el botón si el navegador nos dió permiso real (installPrompt existe) */}
+            {(!isStandalone && installPrompt) && (
+              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4">
                  ⬇ Instalar App Segura
               </div>
             )}
@@ -638,7 +553,6 @@ const App = () => {
                </div>
              </div>
              
-             {/* TOGGLE NOTIFICACIÓN SONORA */}
              <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
                <div className="flex items-center gap-3"><div className="p-2 bg-green-900/20 rounded-lg text-green-500"><Bell className="w-5 h-5"/></div><div><p className="font-medium text-sm">Alerta Sonora</p><p className="text-[10px] text-zinc-500">Beep discreto al recibir</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, soundEnabled: !vaultData.settings?.soundEnabled } })} className="cursor-pointer">
@@ -715,7 +629,6 @@ const App = () => {
           </div>
         </header>
         
-        {/* Notificación Audio Enviado */}
         {showAudioToast && (
             <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 bg-zinc-800/95 border border-zinc-700 text-white px-4 py-2 rounded-full text-xs flex items-center gap-2 shadow-xl animate-bounce backdrop-blur-sm">
                 <Mic className="w-3 h-3 text-green-500" />
@@ -819,5 +732,6 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
 
 
