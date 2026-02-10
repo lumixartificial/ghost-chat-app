@@ -92,7 +92,6 @@ const App = () => {
   const [newContactName, setNewContactName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [showAudioToast, setShowAudioToast] = useState(false);
-  const [networkLogs, setNetworkLogs] = useState([]);
   
   // Reloj Global
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -108,8 +107,9 @@ const App = () => {
 
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // AUTO-REPARACIÓN VISUAL
+  // AUTO-REPARACIÓN VISUAL & INYECCIÓN PWA (XIAOMI FIX)
   useEffect(() => {
+    // 1. Estilos
     document.body.style.backgroundColor = '#000000';
     document.body.style.color = '#ffffff';
     document.body.style.margin = '0';
@@ -117,9 +117,8 @@ const App = () => {
 
     const checkStyles = () => {
       const isLoaded = window.getComputedStyle(document.body).getPropertyValue('--tw-text-opacity') !== '';
-      if (isLoaded) {
-        setStylesLoaded(true);
-      } else {
+      if (isLoaded) setStylesLoaded(true);
+      else {
         const script = document.createElement('script');
         script.src = "https://cdn.tailwindcss.com";
         script.onload = () => setStylesLoaded(true);
@@ -127,22 +126,62 @@ const App = () => {
       }
     };
     checkStyles();
-  }, []);
 
-  // DETECCIÓN DE INSTALACIÓN ESTÁNDAR (SIN INYECCIONES RARAS)
-  useEffect(() => {
+    // 2. INYECCIÓN PWA (Para forzar detección en Xiaomi/Android)
+    const injectPWA = async () => {
+        // A. Manifiesto en RAM (Data URI)
+        const manifest = {
+            "name": "Calculadora",
+            "short_name": "Calculadora",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#000000",
+            "theme_color": "#000000",
+            "orientation": "portrait",
+            "icons": [
+                { "src": "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" },
+                { "src": "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" }
+            ]
+        };
+        
+        // Limpiar manifiestos previos
+        document.querySelectorAll('link[rel="manifest"]').forEach(el => el.remove());
+        
+        const blobManifest = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+        const link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = URL.createObjectURL(blobManifest);
+        document.head.appendChild(link);
+
+        // B. Service Worker Virtual (Evita errores de archivo no encontrado)
+        if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
+            const swCode = `
+                self.addEventListener('install', e => self.skipWaiting());
+                self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+                self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
+            `;
+            const blobSW = new Blob([swCode], {type: 'text/javascript'});
+            try {
+                // Registrar el SW desde memoria para asegurar que Chrome vea una PWA válida
+                await navigator.serviceWorker.register(URL.createObjectURL(blobSW));
+            } catch (e) {
+                console.log("SW inject fail", e);
+            }
+        }
+    };
+    injectPWA();
+
+    // 3. Detectar Standalone
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
 
-    // Solo escuchamos el evento nativo del navegador. Si Chrome lo dispara, mostramos el botón.
-    // Si no lo dispara, no mostramos nada para no confundir con instrucciones manuales.
+    // 4. Capturar Evento Nativo de Instalación
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
-      console.log("Navegador listo para instalar nativamente.");
     });
-  }, []);
 
+  }, []);
 
   // Lógica BURN UNIFICADA
   useEffect(() => {
@@ -155,6 +194,8 @@ const App = () => {
         if (view === 'chat' && activeContact) {
             const msgs = vaultDataRef.current.messages[activeContact] || [];
             
+            // Borrar si: tiene burn, ya fue leído, y pasaron 10s
+            // EXCEPCIÓN: Audios se borran por onEnded
             const toDelete = msgs.filter(m => 
                 m.type !== 'audio' && 
                 m.burn && 
@@ -201,9 +242,12 @@ const App = () => {
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
+    
     const updatedVault = { ...vaultDataRef.current, ...newData };
+    
     setVaultData(updatedVault);
     vaultDataRef.current = updatedVault; 
+    
     const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem(STORAGE_KEY, encrypted);
     setHasLocalVault(true);
@@ -428,7 +472,7 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
-  // MODIFICADO: Solo ejecuta la instalación si el navegador lo permite
+  // INSTALACIÓN
   const installPWA = () => {
     if (installPrompt) {
       installPrompt.prompt();
@@ -517,10 +561,10 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {/* Solo mostramos el botón si el navegador nos dió permiso real (installPrompt existe) */}
+            {/* Botón de instalación VISIBLE SOLO SI ES POSIBLE */}
             {(!isStandalone && installPrompt) && (
-              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4">
-                 ⬇ Instalar App Segura
+              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4 bg-zinc-900/50 hover:bg-zinc-900 hover:text-white transition-colors">
+                 ⬇ INSTALAR CALCULADORA
               </div>
             )}
           </>
@@ -552,7 +596,6 @@ const App = () => {
                   {vaultData.settings?.persistHistory ? <ToggleRight className="w-8 h-8 text-blue-500"/> : <ToggleLeft className="w-8 h-8 text-zinc-600"/>}
                </div>
              </div>
-             
              <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-xl">
                <div className="flex items-center gap-3"><div className="p-2 bg-green-900/20 rounded-lg text-green-500"><Bell className="w-5 h-5"/></div><div><p className="font-medium text-sm">Alerta Sonora</p><p className="text-[10px] text-zinc-500">Beep discreto al recibir</p></div></div>
                <div onClick={() => saveToVault({ settings: { ...vaultData.settings, soundEnabled: !vaultData.settings?.soundEnabled } })} className="cursor-pointer">
@@ -732,6 +775,7 @@ const App = () => {
 const rootElement = document.getElementById('root');
 if (rootElement) { try { ReactDOM.unmountComponentAtNode(rootElement); } catch (e) { } ReactDOM.render(<App />, rootElement); }
 export default App;
+
 
 
 
