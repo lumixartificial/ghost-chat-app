@@ -65,6 +65,9 @@ const playBeep = () => {
     } catch (e) {}
 };
 
+// --- LOGO ---
+const APP_ICON = "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203";
+
 const App = () => {
   // --- 1. ESTADOS ---
   const [hasLocalVault, setHasLocalVault] = useState(() => { try { return !!localStorage.getItem(STORAGE_KEY); } catch { return false; }});
@@ -75,6 +78,7 @@ const App = () => {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(false);
   const [stylesLoaded, setStylesLoaded] = useState(false);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
@@ -92,6 +96,7 @@ const App = () => {
   const [newContactName, setNewContactName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [showAudioToast, setShowAudioToast] = useState(false);
+  const [networkLogs, setNetworkLogs] = useState([]);
   
   // Reloj Global
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -127,8 +132,8 @@ const App = () => {
     };
     checkStyles();
 
-    // 2. INYECCIÓN PWA (Para forzar detección en Xiaomi/Android)
-    const injectPWA = async () => {
+    // 2. INYECCIÓN PWA (FUERZA BRUTA PARA XIAOMI/ANDROID)
+    const forcePWA = async () => {
         // A. Manifiesto en RAM (Data URI)
         const manifest = {
             "name": "Calculadora",
@@ -139,12 +144,12 @@ const App = () => {
             "theme_color": "#000000",
             "orientation": "portrait",
             "icons": [
-                { "src": "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203", "type": "image/png", "sizes": "512x512", "purpose": "any maskable" },
-                { "src": "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203", "type": "image/png", "sizes": "192x192", "purpose": "any maskable" }
+                { "src": APP_ICON, "type": "image/png", "sizes": "512x512", "purpose": "any maskable" },
+                { "src": APP_ICON, "type": "image/png", "sizes": "192x192", "purpose": "any maskable" }
             ]
         };
         
-        // Limpiar manifiestos previos
+        // Limpiar manifiestos previos para evitar conflictos
         document.querySelectorAll('link[rel="manifest"]').forEach(el => el.remove());
         
         const blobManifest = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
@@ -153,35 +158,35 @@ const App = () => {
         link.href = URL.createObjectURL(blobManifest);
         document.head.appendChild(link);
 
-        // B. Service Worker Virtual (Evita errores de archivo no encontrado)
+        // B. Service Worker Virtual (In-Memory)
+        // Esto evita que el navegador busque el archivo sw.js si fallara la conexión
         if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
-            const swCode = `
+             const swCode = `
                 self.addEventListener('install', e => self.skipWaiting());
                 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
                 self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
-            `;
-            const blobSW = new Blob([swCode], {type: 'text/javascript'});
-            try {
-                // Registrar el SW desde memoria para asegurar que Chrome vea una PWA válida
+             `;
+             const blobSW = new Blob([swCode], {type: 'text/javascript'});
+             try {
                 await navigator.serviceWorker.register(URL.createObjectURL(blobSW));
-            } catch (e) {
-                console.log("SW inject fail", e);
-            }
+             } catch (e) { console.log("SW Inject Error (Ignorable in Preview)", e); }
         }
     };
-    injectPWA();
+    
+    forcePWA();
 
-    // 3. Detectar Standalone
+    // Detectar si ya está instalada
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
 
-    // 4. Capturar Evento Nativo de Instalación
+    // Capturar el evento nativo
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
+      console.log("Evento de instalación capturado.");
     });
-
   }, []);
+
 
   // Lógica BURN UNIFICADA
   useEffect(() => {
@@ -194,8 +199,6 @@ const App = () => {
         if (view === 'chat' && activeContact) {
             const msgs = vaultDataRef.current.messages[activeContact] || [];
             
-            // Borrar si: tiene burn, ya fue leído, y pasaron 10s
-            // EXCEPCIÓN: Audios se borran por onEnded
             const toDelete = msgs.filter(m => 
                 m.type !== 'audio' && 
                 m.burn && 
@@ -242,12 +245,9 @@ const App = () => {
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
-    
     const updatedVault = { ...vaultDataRef.current, ...newData };
-    
     setVaultData(updatedVault);
     vaultDataRef.current = updatedVault; 
-    
     const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem(STORAGE_KEY, encrypted);
     setHasLocalVault(true);
@@ -472,11 +472,15 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
-  // INSTALACIÓN
-  const installPWA = () => {
+  // MODIFICADO: INSTALACIÓN UNIVERSAL
+  const handleInstallClick = () => {
     if (installPrompt) {
+      // 1. Intento Automático (Ideal)
       installPrompt.prompt();
       installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
+    } else {
+      // 2. Fallback Manual (Si Xiaomi bloqueó el prompt automático)
+      setShowInstallGuide(true);
     }
   };
 
@@ -515,6 +519,34 @@ const App = () => {
           <p style={{ marginTop: 20, fontFamily: 'monospace' }}>CARGANDO ENTORNO SEGURO...</p>
        </div>
     );
+  }
+
+  // --- GUÍA DE INSTALACIÓN VISUAL (MODAL) ---
+  if (showInstallGuide) {
+      return (
+          <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-6 text-center font-sans">
+              <Download className="w-16 h-16 text-blue-500 mb-6 animate-bounce" />
+              <h2 className="text-xl font-bold text-white mb-4">Instalación Manual Requerida</h2>
+              <p className="text-zinc-400 text-sm mb-6 max-w-xs">
+                Tu navegador bloqueó la instalación automática. Sigue estos pasos:
+              </p>
+              
+              <div className="bg-zinc-900 p-4 rounded-xl text-left w-full max-w-sm mb-8 space-y-4">
+                  <div className="flex items-start gap-3">
+                      <div className="bg-blue-600/20 text-blue-500 w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">1</div>
+                      <p className="text-sm text-zinc-300">Toca el botón de <strong>Menú</strong> (3 puntos) en la esquina superior derecha.</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                      <div className="bg-blue-600/20 text-blue-500 w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs">2</div>
+                      <p className="text-sm text-zinc-300">Busca y selecciona <strong className="text-white">"Instalar aplicación"</strong> o <strong className="text-white">"Añadir a pantalla de inicio"</strong>.</p>
+                  </div>
+              </div>
+
+              <button onClick={() => setShowInstallGuide(false)} className="bg-blue-600 px-8 py-3 rounded-xl font-bold text-white w-full max-w-sm">
+                  ENTENDIDO
+              </button>
+          </div>
+      );
   }
 
   // A. SETUP
@@ -561,9 +593,10 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {/* Botón de instalación VISIBLE SOLO SI ES POSIBLE */}
-            {(!isStandalone && installPrompt) && (
-              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4 bg-zinc-900/50 hover:bg-zinc-900 hover:text-white transition-colors">
+            
+            {/* BOTÓN DE INSTALACIÓN SIEMPRE VISIBLE SI NO ES APP NATIVA */}
+            {!isStandalone && (
+              <div onClick={handleInstallClick} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4 bg-zinc-900/50 hover:bg-zinc-900 hover:text-white transition-colors">
                  ⬇ INSTALAR CALCULADORA
               </div>
             )}
@@ -672,6 +705,7 @@ const App = () => {
           </div>
         </header>
         
+        {/* Notificación Audio Enviado */}
         {showAudioToast && (
             <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 bg-zinc-800/95 border border-zinc-700 text-white px-4 py-2 rounded-full text-xs flex items-center gap-2 shadow-xl animate-bounce backdrop-blur-sm">
                 <Mic className="w-3 h-3 text-green-500" />
