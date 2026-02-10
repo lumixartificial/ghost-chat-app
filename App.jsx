@@ -108,8 +108,9 @@ const App = () => {
 
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
 
-  // AUTO-REPARACIÓN VISUAL
+  // AUTO-REPARACIÓN VISUAL Y PWA FORZADA
   useEffect(() => {
+    // Estilos
     document.body.style.backgroundColor = '#000000';
     document.body.style.color = '#ffffff';
     document.body.style.margin = '0';
@@ -117,9 +118,8 @@ const App = () => {
 
     const checkStyles = () => {
       const isLoaded = window.getComputedStyle(document.body).getPropertyValue('--tw-text-opacity') !== '';
-      if (isLoaded) {
-        setStylesLoaded(true);
-      } else {
+      if (isLoaded) setStylesLoaded(true);
+      else {
         const script = document.createElement('script');
         script.src = "https://cdn.tailwindcss.com";
         script.onload = () => setStylesLoaded(true);
@@ -127,18 +127,59 @@ const App = () => {
       }
     };
     checkStyles();
+
+    // INYECCIÓN DE PWA (SOLUCIÓN DEFINITIVA PARA INSTALACIÓN)
+    const injectPWA = async () => {
+      // 1. Inyectar Manifiesto en RAM
+      const manifest = {
+        name: "Calculadora",
+        short_name: "Calculadora",
+        start_url: "/",
+        display: "standalone",
+        background_color: "#000000",
+        theme_color: "#000000",
+        orientation: "portrait",
+        icons: [
+          { src: "https://firebasestorage.googleapis.com/v0/b/lumix-creator.firebasestorage.app/o/logos%2Fcalc.png?alt=media&token=dbc5255f-117d-42a4-ae53-cd3d8f929203", sizes: "512x512", type: "image/png", purpose: "any maskable" }
+        ]
+      };
+      
+      // Eliminar manifiestos viejos si existen
+      document.querySelectorAll('link[rel="manifest"]').forEach(e => e.remove());
+      
+      const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+      const link = document.createElement('link');
+      link.rel = 'manifest';
+      link.href = URL.createObjectURL(blob);
+      document.head.appendChild(link);
+
+      // 2. Registrar Service Worker Virtual (Necesario para el banner de Chrome)
+      if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
+         const swCode = `
+           self.addEventListener('install', e => self.skipWaiting());
+           self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+           self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
+         `;
+         const swBlob = new Blob([swCode], {type: 'text/javascript'});
+         try {
+            await navigator.serviceWorker.register(URL.createObjectURL(swBlob));
+            console.log("SW Inyectado");
+         } catch(e) { console.log("SW Fallo", e); }
+      }
+    };
+    injectPWA();
+
   }, []);
 
-  // DETECCIÓN DE INSTALACIÓN (Sin inyección forzada para evitar errores)
+  // DETECCIÓN DE INSTALACIÓN
   useEffect(() => {
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
     setIsStandalone(isInStandaloneMode);
 
-    // Capturar el evento nativo de Chrome para mostrar el botón
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setInstallPrompt(e);
-      console.log("Evento de instalación capturado");
+      console.log("Evento de instalación LISTO");
     });
   }, []);
 
@@ -432,8 +473,7 @@ const App = () => {
       installPrompt.prompt();
       installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
     } else {
-      // Si no tenemos el prompt automático, es porque el navegador no lo ha disparado aún o no soporta PWA bien.
-      alert("⚠️ Instalación Manual Requerida:\n\n1. Toca los 3 puntos (o menú) de Chrome.\n2. Busca la opción 'Instalar aplicación' o 'Agregar a pantalla principal'.\n\nSi no aparece, asegúrate de no estar en modo incógnito.");
+      alert("Si el botón no funciona:\n1. Toca los 3 puntos del navegador\n2. Selecciona 'Instalar aplicación' o 'Agregar a pantalla principal'.");
     }
   };
 
