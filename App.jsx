@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { 
   Lock, Shield, Settings, Send, Trash2, User, Key, EyeOff, Terminal, 
-  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell, Volume2, VolumeX
+  Globe, RefreshCw, AlertTriangle, UserPlus, Users, Image as ImageIcon, Mic, X, ChevronLeft, Flame, Skull, LogOut, Wifi, WifiOff, Download, Delete, ToggleLeft, ToggleRight, Save, CheckCircle, Bell
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN ---
@@ -45,32 +45,27 @@ const CryptoUtils = {
   }
 };
 
+// --- ICONO CALCULADORA ---
+const CALC_ICON = `data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiI+PHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIGZpbGw9IiMzMzMiIHJ4PSIxMDAiLz48cmVjdCB4PSI1NiIgeT0iNTYiIHdpZHRoPSI0MDAiIGhlaWdodD0iMTIwIiBmaWxsPSIjYWFhIiByeD0iMjAiLz48Y2lyY2xlIGN4PSIxMTYiIGN5PSIyNTYiIHI9IjQwIiBmaWxsPSIjNjY2Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMzk2IiBjeT0iMjU2IiByPSI0MCIgZmlsbD0iI2ZmOTUwMCIvPjxjaXJNsZSBjeD0iMTE2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMjU2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iIzY2NiIvPjxjaXJNsZSBjeD0iMzk2IiBjeT0iMzY2IiByPSI0MCIgZmlsbD0iI2ZmOTUwMCIvPjwvc3ZnPg==`;
+
 // --- UTILIDAD DE SONIDO (BEEP) ---
 const playBeep = () => {
     try {
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         if (!AudioContext) return;
-        
         const ctx = new AudioContext();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-
         osc.connect(gain);
         gain.connect(ctx.destination);
-
-        // Tono tipo "Sonar" suave y corto
         osc.type = 'sine';
         osc.frequency.setValueAtTime(800, ctx.currentTime);
         osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.15);
-        
         gain.gain.setValueAtTime(0.1, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-
         osc.start();
         osc.stop(ctx.currentTime + 0.15);
-    } catch (e) {
-        // Fallo silencioso si el navegador bloquea audio sin interacción
-    }
+    } catch (e) {}
 };
 
 const App = () => {
@@ -82,10 +77,10 @@ const App = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [stylesLoaded, setStylesLoaded] = useState(false);
   
   const [calcDisplay, setCalcDisplay] = useState('0');
   const [setupData, setSetupData] = useState({ username: '', equation: '' });
-  // Añadido 'soundEnabled' a settings
   const [vaultData, setVaultData] = useState({ username: '', contacts: [], messages: {}, settings: { burnOnRead: false, persistHistory: true, soundEnabled: false } });
   
   // Refs
@@ -99,7 +94,6 @@ const App = () => {
   const [inputText, setInputText] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [networkLogs, setNetworkLogs] = useState([]);
   const [showAudioToast, setShowAudioToast] = useState(false);
   
   // Reloj Global
@@ -115,6 +109,27 @@ const App = () => {
   // --- 2. EFECTOS ---
 
   useEffect(() => { vaultDataRef.current = vaultData; }, [vaultData]);
+
+  // AUTO-REPARACIÓN VISUAL
+  useEffect(() => {
+    document.body.style.backgroundColor = '#000000';
+    document.body.style.color = '#ffffff';
+    document.body.style.margin = '0';
+    document.body.style.fontFamily = 'monospace';
+
+    const checkStyles = () => {
+      const isLoaded = window.getComputedStyle(document.body).getPropertyValue('--tw-text-opacity') !== '';
+      if (isLoaded) {
+        setStylesLoaded(true);
+      } else {
+        const script = document.createElement('script');
+        script.src = "https://cdn.tailwindcss.com";
+        script.onload = () => setStylesLoaded(true);
+        document.head.appendChild(script);
+      }
+    };
+    checkStyles();
+  }, []);
 
   useEffect(() => {
     const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -147,7 +162,6 @@ const App = () => {
                const newMsgs = msgs.filter(m => !toDelete.includes(m));
                const newData = { ...vaultDataRef.current };
                newData.messages[activeContact] = newMsgs;
-               
                setVaultData(newData); 
                saveToVault({ messages: { ...vaultDataRef.current.messages, [activeContact]: newMsgs } });
             }
@@ -183,24 +197,17 @@ const App = () => {
   const saveToVault = async (newData, overrideKey = null) => {
     const key = overrideKey || encryptionKeyRef.current;
     if (!key) return;
-    
     const updatedVault = { ...vaultDataRef.current, ...newData };
-    
     setVaultData(updatedVault);
     vaultDataRef.current = updatedVault; 
-    
     const encrypted = await CryptoUtils.encryptData(updatedVault, key);
     localStorage.setItem(STORAGE_KEY, encrypted);
     setHasLocalVault(true);
   };
 
-  // NUEVO: Función para abrir chat y limpiar notificaciones
   const handleOpenChat = (contact) => {
     setActiveContact(contact);
     setView('chat');
-    
-    // Marcar todos los mensajes de este contacto como leídos (para notificación de lista)
-    // Nota: Esto NO inicia el timer de quemado. El timer inicia con 'readAt' al tocar el mensaje.
     const currentMsgs = vaultDataRef.current.messages[contact] || [];
     if (currentMsgs.some(m => !m.isMe && !m.read)) {
         const updatedMsgs = currentMsgs.map(m => (!m.isMe ? { ...m, read: true } : m));
@@ -212,13 +219,10 @@ const App = () => {
     const msgs = vaultDataRef.current.messages[contact] || [];
     const msgIndex = msgs.findIndex(m => m.id === msgId);
     if (msgIndex === -1) return;
-
     if (msgs[msgIndex].readAt) return;
-
     const newMsg = { ...msgs[msgIndex], readAt: Date.now() }; 
     const newMsgs = [...msgs];
     newMsgs[msgIndex] = newMsg;
-
     saveToVault({ messages: { ...vaultDataRef.current.messages, [contact]: newMsgs } });
   };
 
@@ -226,13 +230,7 @@ const App = () => {
     const currentData = vaultDataRef.current;
     const currentMessages = currentData.messages[contact] || [];
     const newMessages = currentMessages.filter(m => m.id !== msgId);
-    
-    saveToVault({ 
-        messages: { 
-            ...currentData.messages, 
-            [contact]: newMessages 
-        } 
-    });
+    saveToVault({ messages: { ...currentData.messages, [contact]: newMessages } });
   };
 
   const attemptUnlock = async () => {
@@ -241,10 +239,7 @@ const App = () => {
     const decrypted = await CryptoUtils.decryptData(stored, calcDisplay);
     setIsLoading(false);
     if (decrypted) {
-      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true, soundEnabled: false }; // Default sound false
-      // Migración segura de settings
-      if (decrypted.settings.soundEnabled === undefined) decrypted.settings.soundEnabled = false;
-      
+      if (!decrypted.settings) decrypted.settings = { burnOnRead: false, persistHistory: true, soundEnabled: false };
       encryptionKeyRef.current = calcDisplay; 
       setVaultData(decrypted);
       setIsVaultLocked(false);
@@ -287,7 +282,6 @@ const App = () => {
       const data = JSON.parse(jsonStr);
       if (data.type === 'INCOMING_MSG') {
         const sender = data.from;
-        
         const currentData = vaultDataRef.current;
         let newContacts = [...currentData.contacts];
         if (!newContacts.includes(sender)) newContacts.push(sender);
@@ -298,17 +292,11 @@ const App = () => {
           id: Date.now(),
           type: data.contentType, content: data.content, sender: sender,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-          isMe: false, 
-          read: false, 
-          burn: shouldBurn,
-          readAt: null 
+          isMe: false, read: false, burn: shouldBurn, readAt: null 
         };
         saveToVault({ contacts: newContacts, messages: { ...currentData.messages, [sender]: [...(currentData.messages[sender] || []), msgObj] } });
         
-        // --- SONIDO DE NOTIFICACIÓN ---
-        if (currentData.settings?.soundEnabled) {
-            playBeep();
-        }
+        if (currentData.settings?.soundEnabled) playBeep();
       }
     } catch (e) {}
   };
@@ -323,9 +311,7 @@ const App = () => {
         const msgObj = {
           id: Date.now(), type, content: payload, sender: currentData.username,
           timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-          isMe: true, 
-          burn: currentData.settings.burnOnRead, 
-          readAt: Date.now() 
+          isMe: true, burn: currentData.settings.burnOnRead, readAt: Date.now() 
         };
         saveToVault({ messages: { ...currentData.messages, [activeContact]: [...(currentData.messages[activeContact] || []), msgObj] } });
     } else {
@@ -349,31 +335,20 @@ const App = () => {
       else if (MediaRecorder.isTypeSupported("audio/webm")) mimeType = "audio/webm";
       const options = mimeType ? { mimeType } : undefined;
       
-      try {
-        mediaRecorderRef.current = new MediaRecorder(stream, options);
-      } catch(e) {
-        mediaRecorderRef.current = new MediaRecorder(stream);
-      }
+      try { mediaRecorderRef.current = new MediaRecorder(stream, options); } catch(e) { mediaRecorderRef.current = new MediaRecorder(stream); }
 
       audioChunksRef.current = [];
-      mediaRecorderRef.current.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
+      mediaRecorderRef.current.ondataavailable = (e) => { if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data); };
       mediaRecorderRef.current.onstop = () => {
         const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
         const reader = new FileReader();
         reader.readAsDataURL(blob);
-        reader.onloadend = () => {
-            if(reader.result && blob.size > 0) sendMessage('audio', reader.result);
-        };
+        reader.onloadend = () => { if(reader.result && blob.size > 0) sendMessage('audio', reader.result); };
         stream.getTracks().forEach(track => track.stop());
       };
       mediaRecorderRef.current.start();
       setIsRecording(true);
-    } catch (e) {
-      alert("Error: No se pudo acceder al micrófono.");
-      setIsRecording(false);
-    }
+    } catch (e) { alert("Error: No se pudo acceder al micrófono."); setIsRecording(false); }
   };
 
   const stopRecordingAndSend = () => {
@@ -449,12 +424,19 @@ const App = () => {
     setCalcDisplay(prev => (prev === '0' && !isNaN(val) ? val : prev + val));
   };
 
+  // MODIFICADO: Lógica de instalación robusta
   const installPWA = () => {
     if (installPrompt) {
       installPrompt.prompt();
       installPrompt.userChoice.then((choiceResult) => { if (choiceResult.outcome === 'accepted') setInstallPrompt(null); });
     } else {
-      alert("Para instalar: \nAndroid: Menú > Instalar aplicación\niOS: Compartir > Añadir a pantalla de inicio");
+      // Detección mejorada
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      if (isIOS) {
+          alert("Para instalar en iPhone/iPad:\n1. Toca el botón 'Compartir' (cuadrado con flecha)\n2. Baja y selecciona 'Añadir a pantalla de inicio'");
+      } else {
+          alert("Para instalar en Android:\n1. Toca los 3 puntos del navegador\n2. Selecciona 'Instalar aplicación' o 'Añadir a pantalla de inicio'");
+      }
     }
   };
 
@@ -470,6 +452,10 @@ const App = () => {
     }
   };
 
+  const toggleBurnMode = () => {
+    saveToVault({ settings: { ...vaultData.settings, burnOnRead: !vaultData.settings.burnOnRead } });
+  };
+
   const deleteChat = () => {
     if(confirm("¿Eliminar historial con " + activeContact + "?")) {
       const newMessages = { ...vaultData.messages };
@@ -479,6 +465,17 @@ const App = () => {
   };
 
   // --- VISTAS ---
+
+  const containerStyle = { backgroundColor: 'black', minHeight: '100vh', color: 'white', display: 'flex', flexDirection: 'column' };
+
+  if (!stylesLoaded) {
+    return (
+       <div style={{ ...containerStyle, alignItems: 'center', justifyContent: 'center' }}>
+          <RefreshCw className="animate-spin w-12 h-12 text-blue-500" />
+          <p style={{ marginTop: 20, fontFamily: 'monospace' }}>CARGANDO ENTORNO SEGURO...</p>
+       </div>
+    );
+  }
 
   // A. SETUP
   if (!hasLocalVault) {
@@ -524,9 +521,10 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {(!isStandalone && installPrompt) && (
-              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse">
-                 Instalar Calculadora
+            {/* Botón de instalación VISIBLE SI NO ES STANDALONE */}
+            {!isStandalone && (
+              <div onClick={installPWA} className="py-4 text-center text-zinc-500 text-xs uppercase tracking-widest cursor-pointer animate-pulse border border-zinc-900 rounded-full mt-4">
+                 ⬇ Instalar App Segura
               </div>
             )}
           </>
@@ -596,23 +594,15 @@ const App = () => {
           <div className="flex gap-2 mb-6"><input placeholder="ID Amigo..." className="flex-1 bg-zinc-900 rounded-lg px-4 py-3 text-sm outline-none" value={newContactName} onChange={e => setNewContactName(e.target.value)} /><button onClick={addContact} className="bg-blue-600 p-3 rounded-lg hover:bg-blue-500 transition-colors"><UserPlus className="w-5 h-5"/></button></div>
           <div className="space-y-2">
             {vaultData.contacts.map(c => {
-                // Cálculo de mensajes no leídos para el BADGE (Notificación)
                 const unreadCount = (vaultData.messages[c] || []).filter(m => !m.isMe && !m.read).length;
-                
                 return (
                   <div key={c} onClick={() => handleOpenChat(c)} className="p-4 bg-zinc-900/50 rounded-xl flex justify-between items-center cursor-pointer hover:bg-zinc-900 transition-colors">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-blue-900 rounded-full flex items-center justify-center font-bold text-sm uppercase">{c[0]}</div>
                         <div><h3 className="font-medium">{c}</h3></div>
                     </div>
-                    
                     <div className="flex items-center gap-2">
-                        {/* NOTIFICACIÓN VISUAL (BADGE) */}
-                        {unreadCount > 0 && (
-                            <div className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-pulse">
-                                {unreadCount}
-                            </div>
-                        )}
+                        {unreadCount > 0 && <div className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-[0_0_10px_rgba(239,68,68,0.5)] animate-pulse">{unreadCount}</div>}
                         <ChevronLeft className="rotate-180 w-5 h-5 text-zinc-600"/>
                     </div>
                   </div>
@@ -644,7 +634,6 @@ const App = () => {
           </div>
         </header>
         
-        {/* Notificación Audio Enviado */}
         {showAudioToast && (
             <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-50 bg-zinc-800/95 border border-zinc-700 text-white px-4 py-2 rounded-full text-xs flex items-center gap-2 shadow-xl animate-bounce backdrop-blur-sm">
                 <Mic className="w-3 h-3 text-green-500" />
@@ -654,9 +643,7 @@ const App = () => {
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {msgs.map((msg, i) => {
-             // Calculamos el tiempo restante para el burn
              const secondsLeft = msg.burn && msg.readAt ? Math.max(0, Math.ceil(10 - (currentTime - msg.readAt) / 1000)) : null;
-             // Lógica de Blur: NO aplicar a audios
              const isBlurry = !msg.isMe && !msg.readAt && msg.type !== 'audio';
 
              return (
@@ -665,7 +652,6 @@ const App = () => {
                   onClick={() => isBlurry && handleReadMessage(activeContact, msg.id)}
                   className={`max-w-[80%] p-3 rounded-xl ${msg.isMe ? 'bg-blue-900/40 text-blue-100' : 'bg-zinc-800 text-zinc-200'} relative ${isBlurry ? 'cursor-pointer' : ''}`}
                 >
-                  {/* Contenedor con efecto blur condicional */}
                   <div className={`transition-all duration-300 ${isBlurry ? 'blur-md select-none' : ''}`}>
                       {msg.burn && msg.readAt && msg.type !== 'audio' ? (
                           <div className="flex flex-col gap-1">
@@ -692,7 +678,6 @@ const App = () => {
                       )}
                   </div>
                   
-                  {/* Overlay de Candado (Solo si está borroso) */}
                   {isBlurry && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                           <EyeOff className="w-6 h-6 text-white/50 animate-pulse"/>
@@ -708,7 +693,6 @@ const App = () => {
         </div>
 
         <div className="p-3 border-t border-zinc-900 bg-zinc-950 flex gap-2 items-end">
-            {/* UI DE GRABACIÓN DE AUDIO MEJORADA */}
             {isRecording ? (
                 <div className="flex-1 flex items-center gap-3 bg-zinc-900 rounded-xl px-4 py-3">
                     <div className="animate-pulse text-red-500 flex items-center gap-2 flex-1">
@@ -730,7 +714,6 @@ const App = () => {
                 </>
             )}
             
-            {/* BOTÓN DINÁMICO DE ACCIÓN */}
             {isRecording ? (
                 <button onClick={stopRecordingAndSend} className="p-3 bg-green-600 rounded-xl animate-pulse shadow-[0_0_15px_rgba(22,163,74,0.5)]">
                     <Send className="w-5 h-5"/>
